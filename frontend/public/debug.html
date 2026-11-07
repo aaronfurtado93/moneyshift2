@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MoneyShift screen check</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; background: #fff; color: #111; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } }
+  table { border-collapse: collapse; width: 100%; }
+  td { border-bottom: 1px solid #8884; padding: 6px 4px; vertical-align: top; word-break: break-word; }
+  td:first-child { color: #888; width: 45%; }
+  .bar { height: 14px; background: #3b5bdb; margin: 12px 0; width: 100%; }
+</style>
+</head>
+<body>
+<h2>Screen check</h2>
+<p>Send a screenshot of this page from each phone.</p>
+<div class="bar"></div>
+<table id="t"></table>
+<script>
+  const vv = window.visualViewport;
+  const rows = {
+    'Layout width (CSS px)': innerWidth,
+    'Layout height (CSS px)': innerHeight,
+    'Screen size (CSS px)': screen.width + ' x ' + screen.height,
+    'Pixel ratio': devicePixelRatio,
+    'Page scale (pinch zoom)': vv ? vv.scale : 'n/a',
+    'Viewport meta': (document.querySelector('meta[name=viewport]') || {}).content,
+    'Mobile browser (hint)': navigator.userAgentData ? navigator.userAgentData.mobile : 'n/a',
+    'Touch points': navigator.maxTouchPoints,
+    'Orientation': screen.orientation ? screen.orientation.type : 'n/a',
+    'User agent': navigator.userAgent,
+  };
+  document.getElementById('t').innerHTML = Object.entries(rows)
+    .map(([k, v]) => '<tr><td>' + k + '</td><td>' + String(v) + '</td></tr>').join('');
+</script>
+</body>
+</html>
