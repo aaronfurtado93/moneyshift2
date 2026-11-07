@@ -20,6 +20,7 @@ class Game(Base):
     status: Mapped[str] = mapped_column(String(12), default="active")  # active | ended
     mode: Mapped[str] = mapped_column(String(24), default="monopoly")
     dice: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: last roll and turn state
+    settings: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: host settings (GameSettings)
     starting_balance: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(8), default="$")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

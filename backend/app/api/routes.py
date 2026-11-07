@@ -270,30 +270,63 @@ async def clear_status(
     )
 
 
-@router.post("/games/{code}/dice/roll")
-async def roll_dice(code: str, request: Request, x_player_token: str | None = Header(default=None)) -> dict:
-    return await _mutate(request, code, x_player_token, lambda svc, g, me: svc.roll_dice(g, me))
+def _simple(path: str, method: str):
+    """Register POST /games/{code}/<path> that calls GameService.<method>(game, me)."""
+
+    async def handler(code: str, request: Request, x_player_token: str | None = Header(default=None)) -> dict:
+        return await _mutate(request, code, x_player_token, lambda svc, g, me: getattr(svc, method)(g, me))
+
+    handler.__name__ = method
+    router.post(f"/games/{{code}}/{path}")(handler)
 
 
-@router.post("/games/{code}/dice/end")
-async def end_turn(code: str, request: Request, x_player_token: str | None = Header(default=None)) -> dict:
-    return await _mutate(request, code, x_player_token, lambda svc, g, me: svc.end_turn(g, me))
+_simple("turn/roll", "roll_dice")  # Monopoly: roll the dice
+_simple("turn/end", "end_turn")  # both modes: finish your turn
+_simple("turn/skip", "skip_turn")  # UnoPoly: Skip card
+_simple("turn/reverse", "reverse_turn")  # UnoPoly: Reverse card
+_simple("turn/pass", "pass_turn")  # host override
+_simple("turn/callout", "start_callout")  # UnoPoly: call someone out for not saying UNO
+_simple("turn/callout/cancel", "cancel_callout")  # host override
+_simple("settings/test-siren", "preview_siren")  # host: play the siren on every device
+_simple("restart", "restart_game")  # host: start over with the same players
 
 
-@router.post("/games/{code}/dice/pass")
-async def pass_dice(code: str, request: Request, x_player_token: str | None = Header(default=None)) -> dict:
-    return await _mutate(request, code, x_player_token, lambda svc, g, me: svc.pass_dice(g, me))
-
-
-@router.post("/games/{code}/dice/assign")
-async def assign_dice(
+@router.post("/games/{code}/turn/assign")
+async def assign_turn(
     code: str,
     body: schemas.DiceAssign,
     request: Request,
     x_player_token: str | None = Header(default=None),
 ) -> dict:
     return await _mutate(
-        request, code, x_player_token, lambda svc, g, me: svc.assign_dice(g, me, body.player_id)
+        request, code, x_player_token, lambda svc, g, me: svc.assign_turn(g, me, body.player_id)
+    )
+
+
+@router.post("/games/{code}/turn/callout/vote")
+async def vote_callout(
+    code: str,
+    body: schemas.CalloutVote,
+    request: Request,
+    x_player_token: str | None = Header(default=None),
+) -> dict:
+    return await _mutate(
+        request, code, x_player_token, lambda svc, g, me: svc.vote_callout(g, me, body.agree)
+    )
+
+
+@router.post("/games/{code}/settings")
+async def update_settings(
+    code: str,
+    body: schemas.SettingsUpdate,
+    request: Request,
+    x_player_token: str | None = Header(default=None),
+) -> dict:
+    return await _mutate(
+        request,
+        code,
+        x_player_token,
+        lambda svc, g, me: svc.update_settings(g, me, body.siren_volume),
     )
 
 

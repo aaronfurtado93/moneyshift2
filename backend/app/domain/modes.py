@@ -1,10 +1,13 @@
-"""Game modes: presets for starting money, currency, quick amounts and one-tap bank actions.
+"""Game modes as classes.
 
-A mode only supplies defaults and shortcuts; the ledger and rules are the same for every mode.
-To add a game, add an entry to MODES.
+`GameMode` is the abstract root. `MonopolyGameMode` is the base game: money, the bank, Jail and the
+dice. `UnoPolyGameMode` derives from it and swaps the dice for physical Uno cards. A mode only
+supplies defaults, shortcuts and which status effects apply; the ledger rules are shared by all.
+To add a game, subclass one of these and add an instance to MODES.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -16,18 +19,20 @@ class BankAction:
     kind: str  # "pay" (bank pays the player) or "collect" (player pays the bank)
     amount: int
 
+    def public(self) -> dict:
+        return {"id": self.id, "label": self.label, "kind": self.kind, "amount": self.amount}
+
 
 @dataclass(frozen=True)
 class StatusEffect:
-    """A condition a player can be under, such as Monopoly's Jail: miss `turns` turns or pay `fine`."""
+    """A condition on a player. kind "penalty": miss `turns` turns or pay `fine` (Jail).
+    kind "turn": one holder at a time that moves round the table in player order (Dice, Card)."""
 
     id: str
     label: str
     description: str
     turns: int
     fine: int
-    # "penalty": a condition with turns to miss and a fine (Jail).
-    # "turn": one holder at a time that moves round the table in player order (Dice).
     kind: str = "penalty"
 
     def public(self) -> dict:
@@ -57,19 +62,30 @@ EFFECTS: dict[str, StatusEffect] = {
         fine=0,
         kind="turn",
     ),
+    "card": StatusEffect(
+        id="card",
+        label="Card",
+        description="Whoever holds the card plays their Uno card; the turn then passes round the table.",
+        turns=0,
+        fine=0,
+        kind="turn",
+    ),
 }
 
 
-@dataclass(frozen=True)
 class GameMode:
-    id: str
-    name: str
-    description: str
-    starting_balance: int
-    currency: str
-    quick_amounts: list[int] = field(default_factory=list)
-    bank_actions: list[BankAction] = field(default_factory=list)
-    status_effects: list[str] = field(default_factory=list)  # ids from EFFECTS
+    """Abstract root of every game mode. Subclasses override the class attributes they care about."""
+
+    id: ClassVar[str] = "base"
+    name: ClassVar[str] = "Game"
+    description: ClassVar[str] = ""
+    starting_balance: ClassVar[int] = 1000
+    currency: ClassVar[str] = "$"
+    quick_amounts: ClassVar[tuple[int, ...]] = (10, 50, 100, 500)
+    bank_actions: ClassVar[tuple[BankAction, ...]] = ()
+    status_effects: ClassVar[tuple[str, ...]] = ()  # ids from EFFECTS
+    turn_effect: ClassVar[str | None] = None  # the "turn" effect that goes round the table, if any
+    callouts: ClassVar[bool] = False  # can players "call out" someone for forgetting to say UNO?
 
     def public(self) -> dict:
         return {
@@ -78,40 +94,57 @@ class GameMode:
             "description": self.description,
             "starting_balance": self.starting_balance,
             "currency": self.currency,
-            "quick_amounts": self.quick_amounts,
-            "bank_actions": [
-                {"id": a.id, "label": a.label, "kind": a.kind, "amount": a.amount} for a in self.bank_actions
-            ],
+            "quick_amounts": list(self.quick_amounts),
+            "bank_actions": [a.public() for a in self.bank_actions],
             "status_effects": [EFFECTS[i].public() for i in self.status_effects],
+            "turn_effect": self.turn_effect,
+            "callouts": self.callouts,
         }
 
 
-DEFAULT_MODE = "monopoly"
+class CustomGameMode(GameMode):
+    id = "custom"
+    name = "Custom"
+    description = "Any game: choose your own starting money and symbol."
+    quick_amounts = (10, 50, 100, 500, 1000)
+
+
+class MonopolyGameMode(GameMode):
+    """The base game. Other Monopoly-style modes derive from this one."""
+
+    id = "monopoly"
+    name = "Monopoly"
+    description = "Classic board game money: start with 1,500, collect 200 for passing GO."
+    starting_balance = 1500
+    quick_amounts = (1, 5, 10, 20, 50, 100, 500)
+    bank_actions = (
+        BankAction("go", "Pass GO", "pay", 200),
+        BankAction("income_tax", "Income tax", "collect", 200),
+        BankAction("luxury_tax", "Luxury tax", "collect", 75),
+        BankAction("jail", "Jail fine", "collect", 50),
+    )
+    status_effects = ("jail", "dice")
+    turn_effect = "dice"
+
+
+class UnoPolyGameMode(MonopolyGameMode):
+    """Monopoly money and Jail, but the turn is driven by Uno cards held in hand instead of dice."""
+
+    id = "unopoly"
+    name = "UnoPoly"
+    description = (
+        "Monopoly money with Uno cards instead of dice: end your turn, skip the next player or reverse "
+        "the order. Players can call out someone who forgot to say UNO."
+    )
+    status_effects = ("jail", "card")
+    turn_effect = "card"
+    callouts = True
+
+
+DEFAULT_MODE = MonopolyGameMode.id
 
 MODES: dict[str, GameMode] = {
-    "monopoly": GameMode(
-        id="monopoly",
-        name="Monopoly",
-        description="Classic board game money: start with 1,500, collect 200 for passing GO.",
-        starting_balance=1500,
-        currency="$",
-        quick_amounts=[1, 5, 10, 20, 50, 100, 500],
-        bank_actions=[
-            BankAction("go", "Pass GO", "pay", 200),
-            BankAction("income_tax", "Income tax", "collect", 200),
-            BankAction("luxury_tax", "Luxury tax", "collect", 75),
-            BankAction("jail", "Jail fine", "collect", 50),
-        ],
-        status_effects=["jail", "dice"],
-    ),
-    "custom": GameMode(
-        id="custom",
-        name="Custom",
-        description="Any game: choose your own starting money and symbol.",
-        starting_balance=1000,
-        currency="$",
-        quick_amounts=[10, 50, 100, 500, 1000],
-    ),
+    mode.id: mode for mode in (MonopolyGameMode(), UnoPolyGameMode(), CustomGameMode())
 }
 
 

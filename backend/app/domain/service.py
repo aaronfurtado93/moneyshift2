@@ -9,48 +9,23 @@ Rules in one place:
 - Undo is a compensating ledger entry, never a delete.
 """
 
-import json
-import random
 import re
 import secrets
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import BankRequest, Event, Game, Player, PlayerStatus, Transaction
+from app.domain.common import DomainError, Outcome
 from app.domain.modes import DEFAULT_MODE, EFFECTS, StatusEffect, get_mode
+from app.domain.settings import GameSettings
+from app.domain.turns import TurnMixin
 
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 MAX_AMOUNT = 1_000_000_000
 COLOUR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 DEFAULT_COLOURS = ["#e11d48", "#2563eb", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777"]
-
-
-class DomainError(Exception):
-    def __init__(self, message: str, status: int = 400, code: str = "bad_request"):
-        super().__init__(message)
-        self.message = message
-        self.status = status
-        self.code = code
-
-
-@dataclass
-class Outcome:
-    """Result of a mutation: what to return to the caller and which events to broadcast."""
-
-    data: dict
-    events: list[dict] = field(default_factory=list)
-    duplicate: bool = False
-
-
-_rng = random.SystemRandom()
-
-
-def roll_die() -> int:
-    """One six-sided die, rolled on the server so nobody can fake a roll."""
-    return _rng.randint(1, 6)
 
 
 def _money(game: Game, amount: int) -> str:
@@ -74,7 +49,7 @@ def _clean_note(note: str | None) -> str:
     return " ".join((note or "").split())[:60]
 
 
-class GameService:
+class GameService(TurnMixin):
     def __init__(self, db: Session):
         self.db = db
 
@@ -206,7 +181,7 @@ class GameService:
         self.db.flush()
         who = host.name if host_plays else f"{host.name} (bank)"
         ev = self._event(game, "player_joined", f"{who} created the game")
-        return game, host, [ev, *self.ensure_dice(game)]
+        return game, host, [ev, *self.ensure_turn(game)]
 
     def join(self, code: str, name: str, colour: str | None) -> tuple[Game, Player, list[dict]]:
         game = self.get_game(code)
@@ -229,7 +204,7 @@ class GameService:
         self.db.add(player)
         self.db.flush()
         ev = self._event(game, "player_joined", f"{player.name} joined")
-        return game, player, [ev, *self.ensure_dice(game)]
+        return game, player, [ev, *self.ensure_turn(game)]
 
     def end_game(self, game: Game, me: Player) -> Outcome:
         self._require_host(me)
@@ -324,14 +299,14 @@ class GameService:
         if me.id != player.id and me.role != "host":
             raise DomainError("Only the player or the host can do that", 403, "forbidden")
         status = self._require_status(game, player, effect.id)
-        holder = self._holder(game) if self._has_dice(game) else None
+        holder = self._holder(game) if self._has_turn(game) else None
         on_turn = holder is not None and holder.id == player.id
         if not status.decided:
-            if me.role != "host" and self._has_dice(game) and not on_turn:
+            if me.role != "host" and self._has_turn(game) and not on_turn:
                 raise DomainError("You choose on your own turn", 409, "not_your_turn")
             events = self._jail_miss(game, player, status, effect)
             if on_turn:  # their turn is over
-                events += self._advance_dice(game, player)
+                events += self._advance_turn(game, player)
             return Outcome(self._status_view(status, player, effect), events)
         self._require_host(me)  # already decided: only the host can adjust by hand
         events = self._jail_miss(game, player, status, effect, manual=True)
@@ -399,165 +374,6 @@ class GameService:
         ev = self._event(game, "status_changed", f"{player.name} was released from {effect.label}")
         return Outcome({"player_id": player.id, "effect": effect.id, "turns_left": 0}, [ev])
 
-    # ---------- dice: a status effect that goes round the table in player order ----------
-    def _mode_of(self, game: Game):
-        return get_mode(game.mode) or get_mode(DEFAULT_MODE)
-
-    def _has_dice(self, game: Game) -> bool:
-        return "dice" in self._mode_of(game).status_effects
-
-    def _sequence(self, game: Game) -> list[Player]:
-        """Players who take turns, in the host's player sequence."""
-        return list(
-            self.db.scalars(
-                select(Player)
-                .where(Player.game_id == game.id, Player.plays.is_(True))
-                .order_by(Player.position, Player.id)
-            )
-        )
-
-    def _holder(self, game: Game) -> Player | None:
-        status = self.db.scalar(
-            select(PlayerStatus).where(PlayerStatus.game_id == game.id, PlayerStatus.effect == "dice")
-        )
-        return self.db.get(Player, status.player_id) if status else None
-
-    def _dice_state(self, game: Game) -> dict:
-        # rolled: a non-double was rolled, so the turn must end. acted: rolled at least once this turn.
-        base = {"rolled": False, "acted": False, "streak": 0, "last": None}
-        return {**base, **(json.loads(game.dice) if game.dice else {})}
-
-    def _save_dice(self, game: Game, state: dict) -> None:
-        game.dice = json.dumps(state)
-
-    def _give_dice(self, game: Game, player: Player) -> dict:
-        for old in self.db.scalars(
-            select(PlayerStatus).where(PlayerStatus.game_id == game.id, PlayerStatus.effect == "dice")
-        ):
-            self.db.delete(old)
-        self.db.flush()
-        self.db.add(PlayerStatus(game_id=game.id, player_id=player.id, effect="dice", turns_left=0))
-        state = self._dice_state(game)
-        state.update(rolled=False, acted=False, streak=0)
-        self._save_dice(game, state)
-        self.db.flush()
-        return self._event(game, "dice_passed", f"{player.name} has the dice")
-
-    def ensure_dice(self, game: Game) -> list[dict]:
-        """In modes with dice, someone always holds them: the first player in the sequence to start."""
-        if not self._has_dice(game) or self._holder(game):
-            return []
-        sequence = self._sequence(game)
-        return [self._give_dice(game, sequence[0])] if sequence else []
-
-    def _advance_dice(self, game: Game, current: Player) -> list[dict]:
-        """Pass the dice to the next player in the sequence. Players in Jail are skipped and lose a turn."""
-        sequence = self._sequence(game)
-        if not sequence:
-            return []
-        start = next((i for i, p in enumerate(sequence) if p.id == current.id), -1)
-        events: list[dict] = []
-        chosen = None
-        for step in range(1, len(sequence) + 1):
-            candidate = sequence[(start + step) % len(sequence)]
-            jail = self._status(game, candidate, "jail")
-            if jail is None or not jail.decided:
-                # Free, or in Jail for the first time: their turn (to roll, or to decide about the fine).
-                chosen = candidate
-                break
-            events += self._jail_miss(game, candidate, jail, EFFECTS["jail"])  # a missed turn, no choice left
-        if chosen is None:  # everyone is in Jail: just hand it on
-            chosen = sequence[(start + 1) % len(sequence)]
-        events.append(self._give_dice(game, chosen))
-        return events
-
-    def _dice_actor(self, game: Game, me: Player) -> Player:
-        self._require_active(game)
-        if not self._has_dice(game):
-            raise DomainError("This game mode has no dice", 400, "not_in_mode")
-        holder = self._holder(game)
-        if holder is None:
-            raise DomainError("Nobody has the dice yet", 409, "conflict")
-        if me.id != holder.id and me.role != "host":
-            raise DomainError(f"It is {holder.name}'s turn to roll", 403, "forbidden")
-        return holder
-
-    def _forfeit_jail_turn(self, game: Game, holder: Player) -> list[dict]:
-        """If the host takes the dice away from a jailed player, that counts as their missed turn."""
-        jail = self._status(game, holder, "jail")
-        return self._jail_miss(game, holder, jail, EFFECTS["jail"]) if jail else []
-
-    def roll_dice(self, game: Game, me: Player) -> Outcome:
-        holder = self._dice_actor(game, me)
-        if self._status(game, holder, "jail"):
-            raise DomainError(
-                f"{holder.name} is in Jail: pay the fine or choose to miss the turn", 409, "in_jail"
-            )
-        state = self._dice_state(game)
-        if state["rolled"]:
-            raise DomainError("Already rolled this turn: end the turn", 409, "conflict")
-        d1, d2 = roll_die(), roll_die()
-        double = d1 == d2
-        streak = state["streak"] + 1 if double else 0
-        last = {
-            "roll_id": ((state["last"] or {}).get("roll_id") or 0) + 1,
-            "roller_id": holder.id,
-            "d1": d1,
-            "d2": d2,
-            "total": d1 + d2,
-            "double": double,
-            "streak": streak,
-            "jailed": False,
-        }
-        text = f"{holder.name} rolled {d1} + {d2} = {d1 + d2}"
-        events: list[dict] = []
-        jail_ok = "jail" in self._mode_of(game).status_effects
-        if double and streak >= 3 and jail_ok:
-            last["jailed"] = True
-            self.db.add(
-                PlayerStatus(
-                    game_id=game.id, player_id=holder.id, effect="jail", turns_left=EFFECTS["jail"].turns
-                )
-            )
-            self.db.flush()
-            events.append(self._event(game, "dice_rolled", f"{text}: third double in a row, go to Jail!"))
-            state.update(rolled=False, acted=True, streak=0, last=last)
-            self._save_dice(game, state)
-            events += self._advance_dice(game, holder)
-        else:
-            events.append(
-                self._event(game, "dice_rolled", text + (" (doubles: roll again)" if double else ""))
-            )
-            state.update(rolled=not double, acted=True, streak=streak, last=last)
-            self._save_dice(game, state)
-        return Outcome(last, events)
-
-    def end_turn(self, game: Game, me: Player) -> Outcome:
-        holder = self._dice_actor(game, me)
-        if not self._dice_state(game)["acted"] and me.role != "host":
-            raise DomainError("Roll the dice first", 409, "conflict")
-        events = self._forfeit_jail_turn(game, holder) + self._advance_dice(game, holder)
-        new_holder = self._holder(game)
-        return Outcome({"holder_id": new_holder.id if new_holder else None}, events)
-
-    def pass_dice(self, game: Game, me: Player) -> Outcome:
-        """Host override: hand the dice to the next player in the sequence."""
-        self._require_host(me)
-        holder = self._dice_actor(game, me)
-        events = self._forfeit_jail_turn(game, holder) + self._advance_dice(game, holder)
-        new_holder = self._holder(game)
-        return Outcome({"holder_id": new_holder.id if new_holder else None}, events)
-
-    def assign_dice(self, game: Game, me: Player, player_id: int) -> Outcome:
-        """Host override: give the dice to any player, out of sequence."""
-        self._require_host(me)
-        self._require_active(game)
-        if not self._has_dice(game):
-            raise DomainError("This game mode has no dice", 400, "not_in_mode")
-        player = self._player(game, player_id)
-        self._require_plays(player, "hold the dice")
-        return Outcome({"holder_id": player.id}, [self._give_dice(game, player)])
-
     def set_mode(self, game: Game, me: Player, mode_id: str) -> Outcome:
         """Switch the game mode. Only quick amounts and bank shortcuts change; balances do not."""
         self._require_host(me)
@@ -567,16 +383,38 @@ class GameService:
             raise DomainError(f"Unknown game mode: {mode_id}", 400, "unknown_mode")
         game.mode = mode.id
         events = [self._event(game, "mode_changed", f"The host switched the game mode to {mode.name}")]
-        if "dice" in mode.status_effects:
-            events += self.ensure_dice(game)
-        else:  # no dice in this mode: forget who held them
-            for old in self.db.scalars(
-                select(PlayerStatus).where(PlayerStatus.game_id == game.id, PlayerStatus.effect == "dice")
-            ):
-                self.db.delete(old)
-            game.dice = None
-            self.db.flush()
+        events += self.switch_turn_effect(game, mode)
         return Outcome({"mode": mode.public()}, events)
+
+    def update_settings(self, game: Game, me: Player, siren_volume: int | None = None) -> Outcome:
+        """Host settings for the whole game. They are sent to every device, so a change applies to all."""
+        self._require_host(me)
+        settings = GameSettings.from_json(game.settings)
+        if siren_volume is not None:
+            settings.siren_volume = siren_volume
+        game.settings = settings.to_json()
+        ev = self._event(game, "settings_changed", "The host changed the settings")
+        return Outcome(settings.to_dict(), [ev])
+
+    def preview_siren(self, game: Game, me: Player) -> Outcome:
+        """Host: sound the siren once on every device so the volume can be checked."""
+        self._require_host(me)
+        return Outcome({}, [self._event(game, "siren_test", "The host is testing the siren")])
+
+    def restart_game(self, game: Game, me: Player) -> Outcome:
+        """Start over with the same players: everyone back to the starting money, a clean ledger, no
+        statuses, and the turn back to the first player. Names, colours and the sequence are kept."""
+        self._require_host(me)
+        ev = self._event(game, "game_restarted", "The host restarted the game")
+        for model in (Transaction, BankRequest, PlayerStatus):
+            self.db.execute(delete(model).where(model.game_id == game.id))
+        self.db.execute(delete(Event).where(Event.game_id == game.id, Event.seq < ev["seq"]))
+        for player in self.db.scalars(select(Player).where(Player.game_id == game.id)):
+            player.balance = game.starting_balance if player.plays else 0
+        game.status = "active"
+        game.dice = None
+        self.db.flush()
+        return Outcome({"status": game.status}, [ev, *self.ensure_turn(game)])
 
     def _new_code(self) -> str:
         for _ in range(50):
@@ -812,19 +650,6 @@ class GameService:
             "status": req.status,
         }
 
-    def _dice_view(self, game: Game) -> dict | None:
-        if not self._has_dice(game):
-            return None
-        holder = self._holder(game)
-        state = self._dice_state(game)
-        return {
-            "holder_id": holder.id if holder else None,
-            "rolled": state["rolled"],
-            "acted": state["acted"],
-            "streak": state["streak"],
-            "last": state["last"],
-        }
-
     def snapshot(self, game: Game, me: Player, connected: set[int]) -> dict:
         is_host = me.role == "host"
         # Players only see their own money and their own transactions, until the game has ended.
@@ -857,7 +682,8 @@ class GameService:
                 "starting_balance": game.starting_balance,
                 "currency": game.currency,
                 "mode": (get_mode(game.mode) or get_mode(DEFAULT_MODE)).public(),
-                "dice": self._dice_view(game),
+                "turn": self._turn_view(game),
+                "settings": GameSettings.from_json(game.settings).to_dict(),
             },
             "me": {"id": me.id, "name": me.name, "role": me.role, "colour": me.colour, "plays": me.plays},
             "players": [

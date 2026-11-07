@@ -95,14 +95,22 @@ def test_request_approve_and_deny(client, game):
     assert len(snap(client, game)["requests"]) == 2
     assert len(snap(client, game, "Ben")["requests"]) == 0  # not visible to other players
     # players cannot resolve
-    bad = client.post(f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=ana, json={"approve": True})
+    bad = client.post(
+        f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=ana, json={"approve": True}
+    )
     assert bad.status_code == 403
-    ok = client.post(f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=host, json={"approve": True})
+    ok = client.post(
+        f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=host, json={"approve": True}
+    )
     assert ok.status_code == 200
-    no = client.post(f"/api/games/{code}/requests/{r2['result']['id']}/resolve", headers=host, json={"approve": False})
+    no = client.post(
+        f"/api/games/{code}/requests/{r2['result']['id']}/resolve", headers=host, json={"approve": False}
+    )
     assert no.status_code == 200
     assert balances(client, game)["Ana"] == 1300
-    again = client.post(f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=host, json={"approve": True})
+    again = client.post(
+        f"/api/games/{code}/requests/{r1['result']['id']}/resolve", headers=host, json={"approve": True}
+    )
     assert again.status_code == 409
     assert snap(client, game)["requests"] == []
 
@@ -122,7 +130,9 @@ def test_undo_restores_balances_once(client, game):
 
 def test_ended_game_rejects_changes(client, game):
     host = auth(game["host"]["token"])
-    assert client.post(f"/api/games/{game['code']}/end", headers=auth(game["Ana"]["token"])).status_code == 403
+    assert (
+        client.post(f"/api/games/{game['code']}/end", headers=auth(game["Ana"]["token"])).status_code == 403
+    )
     assert client.post(f"/api/games/{game['code']}/end", headers=host).status_code == 200
     assert pay(client, game, "Ana", "Ben", 10).status_code == 409
     assert client.post(f"/api/games/{game['code']}/join", json={"name": "Cam"}).status_code == 409
@@ -143,17 +153,27 @@ def test_money_is_conserved_under_random_play(client, game):
         elif op == "bank_pay":
             amt = rnd.randint(1, 300)
             who = rnd.choice(names)
-            r = client.post(f"/api/games/{code}/bank/pay", headers=host, json={"player_id": game[who]["player_id"], "amount": amt})
+            r = client.post(
+                f"/api/games/{code}/bank/pay",
+                headers=host,
+                json={"player_id": game[who]["player_id"], "amount": amt},
+            )
             assert r.status_code == 200
             bank_net += amt
         elif op == "bank_collect":
             amt = rnd.randint(1, 300)
             who = rnd.choice(names)
-            r = client.post(f"/api/games/{code}/bank/collect", headers=host, json={"player_id": game[who]["player_id"], "amount": amt})
+            r = client.post(
+                f"/api/games/{code}/bank/collect",
+                headers=host,
+                json={"player_id": game[who]["player_id"], "amount": amt},
+            )
             if r.status_code == 200:
                 bank_net -= amt
         else:
-            txs = [t for t in snap(client, game)["transactions"] if not t["reversed"] and t["kind"] != "reversal"]
+            txs = [
+                t for t in snap(client, game)["transactions"] if not t["reversed"] and t["kind"] != "reversal"
+            ]
             if txs:
                 t = rnd.choice(txs)
                 r = client.post(f"/api/games/{code}/transactions/{t['id']}/reverse", headers=host)
@@ -248,11 +268,15 @@ def test_player_can_pay_the_bank(client, game):
     """What a scanned 'bank' QR code does: a player pays the bank themselves."""
     code = game["code"]
     ana = auth(game["Ana"]["token"])
-    r = client.post(f"/api/games/{code}/transactions", headers=ana, json={"to_id": None, "amount": 150, "key": "tax1"})
+    r = client.post(
+        f"/api/games/{code}/transactions", headers=ana, json={"to_id": None, "amount": 150, "key": "tax1"}
+    )
     assert r.status_code == 200 and r.json()["result"]["kind"] == "bank_collect"
     assert balances(client, game)["Ana"] == 850
     # idempotent, cannot overspend, host can undo
-    dup = client.post(f"/api/games/{code}/transactions", headers=ana, json={"to_id": None, "amount": 150, "key": "tax1"})
+    dup = client.post(
+        f"/api/games/{code}/transactions", headers=ana, json={"to_id": None, "amount": 150, "key": "tax1"}
+    )
     assert dup.json()["duplicate"] is True and balances(client, game)["Ana"] == 850
     over = client.post(f"/api/games/{code}/transactions", headers=ana, json={"to_id": None, "amount": 5000})
     assert over.status_code == 409
@@ -262,7 +286,9 @@ def test_player_can_pay_the_bank(client, game):
 
 
 def test_to_id_is_required(client, game):
-    r = client.post(f"/api/games/{game['code']}/transactions", headers=auth(game["Ana"]["token"]), json={"amount": 5})
+    r = client.post(
+        f"/api/games/{game['code']}/transactions", headers=auth(game["Ana"]["token"]), json={"amount": 5}
+    )
     assert r.status_code == 422  # omitting to_id must not silently mean "the bank"
 
 
@@ -273,12 +299,16 @@ def test_amounts_must_be_whole_numbers(client, game):
     ben_id = game["Ben"]["player_id"]
     bad_amounts = [2.5, 5.0, "5", "5.5", True, 0, -1, 10**10, None]
     for amount in bad_amounts:
-        pay_r = client.post(f"/api/games/{code}/transactions", headers=ana, json={"to_id": ben_id, "amount": amount})
+        pay_r = client.post(
+            f"/api/games/{code}/transactions", headers=ana, json={"to_id": ben_id, "amount": amount}
+        )
         assert pay_r.status_code in (400, 422), (amount, pay_r.text)
         ask = client.post(f"/api/games/{code}/requests", headers=ana, json={"amount": amount})
         assert ask.status_code in (400, 422), (amount, ask.text)
         for op in ("pay", "collect"):
-            b = client.post(f"/api/games/{code}/bank/{op}", headers=host, json={"player_id": ben_id, "amount": amount})
+            b = client.post(
+                f"/api/games/{code}/bank/{op}", headers=host, json={"player_id": ben_id, "amount": amount}
+            )
             assert b.status_code in (400, 422), (op, amount, b.text)
     bad_start = client.post("/api/games", json={"host_name": "X", "starting_balance": 1500.5})
     assert bad_start.status_code == 422
@@ -291,9 +321,15 @@ def raw_snap(client, g, who):
 
 def test_players_cannot_see_other_players_money_or_logs(client, game):
     code = game["code"]
-    pay(client, game, "Ana", "Ben", 120, key="p1")  # Hana (host) and Cara-like third party: none; Ben, Ana involved
+    pay(
+        client, game, "Ana", "Ben", 120, key="p1"
+    )  # Hana (host) and Cara-like third party: none; Ben, Ana involved
     host = auth(game["host"]["token"])
-    client.post(f"/api/games/{code}/bank/pay", headers=host, json={"player_id": game["Ben"]["player_id"], "amount": 30})
+    client.post(
+        f"/api/games/{code}/bank/pay",
+        headers=host,
+        json={"player_id": game["Ben"]["player_id"], "amount": 30},
+    )
 
     # A third player who is not involved in any of it.
     cam = client.post(f"/api/games/{code}/join", json={"name": "Cam"}).json()
@@ -306,12 +342,17 @@ def test_players_cannot_see_other_players_money_or_logs(client, game):
     assert by_name["Ana"] is None and by_name["Ben"] is None and by_name["Hana"] is None
     # No ledger and no payment activity: only public events (joins).
     assert cam_view["transactions"] == []
-    assert all(a["type"] in ("player_joined", "game_ended", "dice_passed") for a in cam_view["activity"])
+    assert all(a["type"] in ("player_joined", "game_ended", "turn_passed") for a in cam_view["activity"])
     assert "paid" not in " ".join(a["text"] for a in cam_view["activity"])
 
     # Ana and Ben see their own money and their own transactions only.
     ana_view = raw_snap(client, game, "Ana")
-    assert {p["name"]: p["balance"] for p in ana_view["players"]} == {"Hana": None, "Ana": 880, "Ben": None, "Cam": None}
+    assert {p["name"]: p["balance"] for p in ana_view["players"]} == {
+        "Hana": None,
+        "Ana": 880,
+        "Ben": None,
+        "Cam": None,
+    }
     assert [t["amount"] for t in ana_view["transactions"]] == [120]
     ben_view = raw_snap(client, game, "Ben")
     assert sorted(t["amount"] for t in ben_view["transactions"]) == [30, 120]
@@ -412,7 +453,8 @@ def test_new_games_default_to_monopoly(client):
 
 def test_house_rules_override_the_mode_defaults(client):
     r = client.post(
-        "/api/games", json={"host_name": "Hana", "mode": "monopoly", "starting_balance": 2000, "currency": "₹"}
+        "/api/games",
+        json={"host_name": "Hana", "mode": "monopoly", "starting_balance": 2000, "currency": "₹"},
     ).json()
     s = client.get(f"/api/games/{r['code']}", headers=auth(r["token"])).json()
     assert s["game"]["starting_balance"] == 2000 and s["game"]["currency"] == "₹"
@@ -554,7 +596,11 @@ def test_paying_the_jail_fine_clears_the_status(client, game):
 
     # the host can pay for a player; a player short of money cannot be fined into negative
     client.post(_status_url(game, "Ben"), headers=host, json={"effect": "jail"})
-    client.post(f"/api/games/{game['code']}/bank/collect", headers=host, json={"player_id": game["Ben"]["player_id"], "amount": 980})
+    client.post(
+        f"/api/games/{game['code']}/bank/collect",
+        headers=host,
+        json={"player_id": game["Ben"]["player_id"], "amount": 980},
+    )
     short = client.post(_status_url(game, "Ben", "/jail/pay"), headers=ben)
     assert short.status_code == 409 and short.json()["code"] == "insufficient"
     assert balances(client, game)["Ben"] == 20
@@ -566,7 +612,9 @@ def test_status_effects_follow_the_game_mode(client):
     custom = client.post("/api/games", json={"host_name": "Hana", "mode": "custom"}).json()
     ana = client.post(f"/api/games/{custom['code']}/join", json={"name": "Ana"}).json()
     r = client.post(
-        f"/api/games/{custom['code']}/players/{ana['player_id']}/status", headers=auth(custom["token"]), json={"effect": "jail"}
+        f"/api/games/{custom['code']}/players/{ana['player_id']}/status",
+        headers=auth(custom["token"]),
+        json={"effect": "jail"},
     )
     assert r.status_code == 400 and r.json()["code"] == "not_in_mode"
     modes = {m["id"]: m for m in client.get("/api/modes").json()["modes"]}
@@ -578,49 +626,51 @@ def test_status_effects_follow_the_game_mode(client):
 
 # ---------------------------------------------------------------- dice
 def _dice(client, game, who="host"):
-    return raw_snap(client, game, who)["game"]["dice"]
+    return raw_snap(client, game, who)["game"]["turn"]
 
 
 def _post(client, game, who, path, **json):
-    return client.post(f"/api/games/{game['code']}{path}", headers=auth(game[who]["token"]), json=json or None)
+    return client.post(
+        f"/api/games/{game['code']}{path}", headers=auth(game[who]["token"]), json=json or None
+    )
 
 
 def _rig(monkeypatch, *values):
     rolls = iter(values)
-    monkeypatch.setattr("app.domain.service.roll_die", lambda: next(rolls))
+    monkeypatch.setattr("app.domain.turns.roll_die", lambda: next(rolls))
 
 
 def test_dice_start_with_the_first_player_and_pass_round_in_sequence(client, game, monkeypatch):
     # sequence is Hana (host, plays), Ana, Ben
     assert _dice(client, game)["holder_id"] == game["host"]["player_id"]
     _rig(monkeypatch, 3, 4)
-    assert _post(client, game, "Ana", "/dice/roll").status_code == 403  # not Ana's turn
-    r = _post(client, game, "host", "/dice/roll")
+    assert _post(client, game, "Ana", "/turn/roll").status_code == 403  # not Ana's turn
+    r = _post(client, game, "host", "/turn/roll")
     assert r.status_code == 200 and r.json()["result"]["total"] == 7
     last = _dice(client, game, "Ben")["last"]  # everyone sees the roll
     assert (last["d1"], last["d2"], last["double"]) == (3, 4, False)
-    assert _post(client, game, "host", "/dice/roll").status_code == 409  # one roll, then end the turn
-    assert _post(client, game, "Ana", "/dice/end").status_code == 403
-    assert _post(client, game, "host", "/dice/end").status_code == 200
+    assert _post(client, game, "host", "/turn/roll").status_code == 409  # one roll, then end the turn
+    assert _post(client, game, "Ana", "/turn/end").status_code == 403
+    assert _post(client, game, "host", "/turn/end").status_code == 200
     assert _dice(client, game)["holder_id"] == game["Ana"]["player_id"]
-    assert _post(client, game, "Ana", "/dice/end").status_code == 409  # must roll before ending
+    assert _post(client, game, "Ana", "/turn/end").status_code == 409  # must roll before ending
     _rig(monkeypatch, 1, 2)
-    _post(client, game, "Ana", "/dice/roll")
-    _post(client, game, "Ana", "/dice/end")
+    _post(client, game, "Ana", "/turn/roll")
+    _post(client, game, "Ana", "/turn/end")
     assert _dice(client, game)["holder_id"] == game["Ben"]["player_id"]
     _rig(monkeypatch, 6, 5)
-    _post(client, game, "Ben", "/dice/roll")
-    _post(client, game, "Ben", "/dice/end")
+    _post(client, game, "Ben", "/turn/roll")
+    _post(client, game, "Ben", "/turn/end")
     assert _dice(client, game)["holder_id"] == game["host"]["player_id"]  # all the way round
 
 
 def test_doubles_roll_again_and_the_third_double_goes_to_jail(client, game, monkeypatch):
     _rig(monkeypatch, 2, 2, 5, 5, 6, 6)
     for expected_streak in (1, 2):
-        r = _post(client, game, "host", "/dice/roll").json()["result"]
+        r = _post(client, game, "host", "/turn/roll").json()["result"]
         assert r["double"] is True and r["streak"] == expected_streak
         assert _dice(client, game)["holder_id"] == game["host"]["player_id"]  # still their turn
-    third = _post(client, game, "host", "/dice/roll").json()["result"]
+    third = _post(client, game, "host", "/turn/roll").json()["result"]
     assert third["jailed"] is True
     me = {p["name"]: p for p in raw_snap(client, game, "Ana")["players"]}["Hana"]
     assert [s["effect"] for s in me["statuses"]] == ["jail"]
@@ -634,9 +684,9 @@ def test_jailed_player_gets_one_chance_to_pay_then_misses_three_turns(client, ga
     ana_url = f"/players/{ids['Ana']}/status/jail"
     _rig(monkeypatch, *([1, 2] * 20))  # plenty of non-double rolls
     client.post(_status_url(game, "Ana"), headers=host, json={"effect": "jail"})
-    _post(client, game, "host", "/dice/end")  # host (holder) ends turn: dice reaches Ana, who is in Jail
+    _post(client, game, "host", "/turn/end")  # host (holder) ends turn: dice reaches Ana, who is in Jail
     assert _dice(client, game)["holder_id"] == ids["Ana"]
-    blocked = _post(client, game, "Ana", "/dice/roll")
+    blocked = _post(client, game, "Ana", "/turn/roll")
     assert blocked.status_code == 409 and blocked.json()["code"] == "in_jail"  # must decide first
 
     # Ana chooses to miss: her one chance to pay is gone; the dice moves on
@@ -653,8 +703,8 @@ def test_jailed_player_gets_one_chance_to_pay_then_misses_three_turns(client, ga
 
     def lap():  # Ben and the host take their turns; Ana is skipped
         for who in ("Ben", "host"):
-            _post(client, game, who, "/dice/roll")
-            _post(client, game, who, "/dice/end")
+            _post(client, game, who, "/turn/roll")
+            _post(client, game, who, "/turn/end")
 
     lap()  # Ana skipped (second missed turn): 1 left
     assert _dice(client, game)["holder_id"] == ids["Ben"]
@@ -663,39 +713,39 @@ def test_jailed_player_gets_one_chance_to_pay_then_misses_three_turns(client, ga
     assert ana_status() == []
     lap()  # the dice finally reaches Ana again
     assert _dice(client, game)["holder_id"] == ids["Ana"]
-    assert _post(client, game, "Ana", "/dice/roll").status_code == 200
+    assert _post(client, game, "Ana", "/turn/roll").status_code == 200
 
 
 def test_jailed_player_who_pays_the_fine_plays_the_turn(client, game, monkeypatch):
     host = auth(game["host"]["token"])
     ana_id = game["Ana"]["player_id"]
     client.post(_status_url(game, "Ana"), headers=host, json={"effect": "jail"})
-    _post(client, game, "host", "/dice/end")
+    _post(client, game, "host", "/turn/end")
     assert _dice(client, game)["holder_id"] == ana_id
     paid = _post(client, game, "Ana", f"/players/{ana_id}/status/jail/pay")
     assert paid.status_code == 200 and balances(client, game)["Ana"] == 950
     _rig(monkeypatch, 2, 5)
-    assert _post(client, game, "Ana", "/dice/roll").status_code == 200  # free to roll now
+    assert _post(client, game, "Ana", "/turn/roll").status_code == 200  # free to roll now
 
 
 def test_host_can_override_the_dice(client, game, monkeypatch):
     ids = {n: game[n]["player_id"] for n in ("Ana", "Ben")}
-    assert _post(client, game, "Ana", "/dice/assign", player_id=ids["Ben"]).status_code == 403
-    assert _post(client, game, "host", "/dice/assign", player_id=ids["Ben"]).status_code == 200
+    assert _post(client, game, "Ana", "/turn/assign", player_id=ids["Ben"]).status_code == 403
+    assert _post(client, game, "host", "/turn/assign", player_id=ids["Ben"]).status_code == 200
     assert _dice(client, game)["holder_id"] == ids["Ben"]
-    assert _post(client, game, "Ana", "/dice/pass").status_code == 403
-    assert _post(client, game, "host", "/dice/pass").status_code == 200  # Ben -> Hana (next in sequence)
+    assert _post(client, game, "Ana", "/turn/pass").status_code == 403
+    assert _post(client, game, "host", "/turn/pass").status_code == 200  # Ben -> Hana (next in sequence)
     assert _dice(client, game)["holder_id"] == game["host"]["player_id"]
     _rig(monkeypatch, 4, 1)
-    assert _post(client, game, "host", "/dice/roll").status_code == 200  # the host (holder) rolls
+    assert _post(client, game, "host", "/turn/roll").status_code == 200  # the host (holder) rolls
     # the host can also roll on behalf of the current holder
-    _post(client, game, "host", "/dice/assign", player_id=ids["Ana"])
+    _post(client, game, "host", "/turn/assign", player_id=ids["Ana"])
     _rig(monkeypatch, 6, 3)
-    assert _post(client, game, "host", "/dice/roll").json()["result"]["roller_id"] == ids["Ana"]
+    assert _post(client, game, "host", "/turn/roll").json()["result"]["roller_id"] == ids["Ana"]
     # taking the dice away from a jailed player counts as their missed turn
     client.post(_status_url(game, "Ben"), headers=auth(game["host"]["token"]), json={"effect": "jail"})
-    _post(client, game, "host", "/dice/assign", player_id=ids["Ben"])
-    _post(client, game, "host", "/dice/pass")
+    _post(client, game, "host", "/turn/assign", player_id=ids["Ben"])
+    _post(client, game, "host", "/turn/pass")
     ben = {p["name"]: p for p in raw_snap(client, game, "Ben")["players"]}["Ben"]
     assert ben["statuses"] == [{"effect": "jail", "label": "Jail", "turns_left": 2, "decided": True}]
 
@@ -706,7 +756,7 @@ def test_dice_follow_the_game_mode(client, game):
     assert _dice(client, game) is not None
     client.post(f"/api/games/{code}/mode", headers=host, json={"mode": "custom"})
     assert _dice(client, game) is None
-    assert _post(client, game, "host", "/dice/roll").status_code == 400
+    assert _post(client, game, "host", "/turn/roll").status_code == 400
     client.post(f"/api/games/{code}/mode", headers=host, json={"mode": "monopoly"})
     assert _dice(client, game)["holder_id"] == game["host"]["player_id"]
     # the generic status endpoints refuse the dice
@@ -717,14 +767,241 @@ def test_dice_follow_the_game_mode(client, game):
 def test_the_holder_can_end_the_turn_after_any_completed_roll(client, game, monkeypatch):
     """After a roll the holder may end their turn; with doubles they can also choose to roll again."""
     host_id, ana_id = game["host"]["player_id"], game["Ana"]["player_id"]
-    assert _post(client, game, "host", "/dice/end").status_code == 200  # host may always pass
+    assert _post(client, game, "host", "/turn/end").status_code == 200  # host may always pass
     assert _dice(client, game)["holder_id"] == ana_id and _dice(client, game)["acted"] is False
-    assert _post(client, game, "Ana", "/dice/end").status_code == 409  # nothing rolled yet
+    assert _post(client, game, "Ana", "/turn/end").status_code == 409  # nothing rolled yet
     _rig(monkeypatch, 3, 3)  # doubles
-    _post(client, game, "Ana", "/dice/roll")
+    _post(client, game, "Ana", "/turn/roll")
     state = _dice(client, game)
     assert state["acted"] is True and state["rolled"] is False and state["streak"] == 1
-    assert _post(client, game, "Ana", "/dice/end").status_code == 200  # may end instead of rolling again
+    assert _post(client, game, "Ana", "/turn/end").status_code == 200  # may end instead of rolling again
     after = _dice(client, game)
     assert after["holder_id"] != ana_id and after["acted"] is False and after["streak"] == 0
     assert host_id != ana_id
+
+
+# ---------------------------------------------------------------- UnoPoly (cards instead of dice)
+import pytest  # noqa: E402
+
+
+@pytest.fixture()
+def uno(client):
+    """An UnoPoly game: Hana (host, plays), Ana, Ben, Cam in that sequence."""
+    host = client.post("/api/games", json={"host_name": "Hana", "mode": "unopoly"}).json()
+    g = {"code": host["code"], "host": host}
+    for name in ("Ana", "Ben", "Cam"):
+        g[name] = client.post(f"/api/games/{g['code']}/join", json={"name": name}).json()
+    return g
+
+
+def _holder_name(client, g):
+    snap_ = raw_snap(client, g, "host")
+    turn = snap_["game"]["turn"]
+    return next(p["name"] for p in snap_["players"] if p["id"] == turn["holder_id"])
+
+
+def _status_names(client, g, name, who="host"):
+    me = {p["name"]: p for p in raw_snap(client, g, who)["players"]}[name]
+    return [s["effect"] for s in me["statuses"]]
+
+
+def test_unopoly_derives_from_monopoly(client):
+    from app.domain.modes import MODES, MonopolyGameMode, UnoPolyGameMode
+
+    assert issubclass(UnoPolyGameMode, MonopolyGameMode)
+    mono, unop = MODES["monopoly"], MODES["unopoly"]
+    # same money, same shortcuts and fines; only the turn mechanic differs
+    assert (unop.starting_balance, unop.quick_amounts, unop.bank_actions) == (
+        mono.starting_balance,
+        mono.quick_amounts,
+        mono.bank_actions,
+    )
+    assert (mono.turn_effect, mono.callouts) == ("dice", False)
+    assert (unop.turn_effect, unop.callouts) == ("card", True)
+    listed = {m["id"]: m for m in client.get("/api/modes").json()["modes"]}
+    assert list(listed) == ["monopoly", "unopoly", "custom"]
+    assert [e["id"] for e in listed["unopoly"]["status_effects"]] == ["jail", "card"]
+
+
+def test_unopoly_has_no_dice_but_the_holder_can_end_the_turn_any_time(client, uno):
+    turn = raw_snap(client, uno, "Ana")["game"]["turn"]
+    assert turn["effect"] == "card" and turn["label"] == "Card"
+    assert _holder_name(client, uno) == "Hana"
+    assert _post(client, uno, "host", "/turn/roll").status_code == 400  # no dice here
+    assert _post(client, uno, "Ana", "/turn/end").status_code == 403  # not Ana's turn
+    for expected in ("Ana", "Ben", "Cam", "Hana"):  # no roll needed; round in sequence
+        holder = _holder_name(client, uno)
+        assert _post(client, uno, "host" if holder == "Hana" else holder, "/turn/end").status_code == 200
+        assert _holder_name(client, uno) == expected
+    assert _status_names(client, uno, "Hana") == ["card"]
+
+
+def test_skip_passes_over_the_next_player(client, uno):
+    assert _post(client, uno, "Ana", "/turn/skip").status_code == 403
+    assert _post(client, uno, "host", "/turn/skip").status_code == 200
+    assert _holder_name(client, uno) == "Ben"  # Ana was skipped
+    texts = [a["text"] for a in raw_snap(client, uno, "host")["activity"]]
+    assert "Ana was skipped" in texts and "Hana played Skip" in texts
+
+
+def test_reverse_flips_the_direction_of_play(client, uno):
+    assert _post(client, uno, "host", "/turn/reverse").status_code == 200
+    assert raw_snap(client, uno, "Ana")["game"]["turn"]["direction"] == -1
+    assert _holder_name(client, uno) == "Cam"  # the way we came
+    _post(client, uno, "Cam", "/turn/end")
+    assert _holder_name(client, uno) == "Ben"  # and it keeps going that way
+    _post(client, uno, "Ben", "/turn/reverse")
+    assert raw_snap(client, uno, "Ana")["game"]["turn"]["direction"] == 1
+    assert _holder_name(client, uno) == "Cam"
+
+
+def test_skip_reverse_and_callouts_only_exist_in_unopoly(client, game):
+    for path in ("/turn/skip", "/turn/reverse"):
+        assert _post(client, game, "host", path).status_code == 400
+    assert _post(client, game, "Ana", "/turn/callout").status_code == 400
+
+
+def test_jail_still_applies_to_the_card_turn(client, uno):
+    host = auth(uno["host"]["token"])
+    ana_url = f"/api/games/{uno['code']}/players/{uno['Ana']['player_id']}/status"
+    client.post(ana_url, headers=host, json={"effect": "jail"})
+    _post(client, uno, "host", "/turn/end")  # the card reaches Ana, in Jail for the first time
+    assert _holder_name(client, uno) == "Ana"
+    assert _post(client, uno, "Ana", "/turn/end").status_code == 200  # ending the turn = missing it
+    ana = {p["name"]: p for p in raw_snap(client, uno, "Ana")["players"]}["Ana"]
+    assert ana["statuses"][0]["effect"] == "jail" and ana["statuses"][0]["decided"] is True
+    _post(client, uno, "Ben", "/turn/end")
+    _post(client, uno, "Cam", "/turn/end")
+    _post(client, uno, "host", "/turn/end")  # Ana is skipped and counts down
+    assert _holder_name(client, uno) == "Ben"
+
+
+def test_call_out_needs_everyone_to_agree_and_then_sends_the_player_to_jail(client, uno):
+    assert _post(client, uno, "Ben", "/turn/callout").status_code == 409  # nobody has ended a turn yet
+    _post(client, uno, "host", "/turn/end")  # Hana ends her turn: the card is with Ana
+    assert _post(client, uno, "host", "/turn/callout").status_code == 403  # cannot call yourself out
+    started = _post(client, uno, "Ben", "/turn/callout")
+    assert started.status_code == 200
+    callout = raw_snap(client, uno, "Cam")["game"]["turn"]["callout"]
+    assert (
+        callout["target_id"] == uno["host"]["player_id"] and callout["caller_id"] == uno["Ben"]["player_id"]
+    )
+    assert sorted(callout["voters"]) == sorted(uno[n]["player_id"] for n in ("Ana", "Ben", "Cam"))
+    assert callout["agree"] == [uno["Ben"]["player_id"]]  # the caller agrees
+    assert _post(client, uno, "Cam", "/turn/callout").status_code == 409  # one at a time
+    assert (
+        _post(client, uno, "host", "/turn/callout/vote", agree=True).status_code == 403
+    )  # the target can't vote
+    assert _post(client, uno, "Ana", "/turn/callout/vote", agree=True).status_code == 200
+    assert _post(client, uno, "Ana", "/turn/callout/vote", agree=True).status_code == 409  # already voted
+    assert "jail" not in _status_names(client, uno, "Hana")  # still waiting for Cam
+    assert _post(client, uno, "Cam", "/turn/callout/vote", agree=True).status_code == 200
+    assert "jail" in _status_names(client, uno, "Hana")  # unanimous: Hana goes to Jail
+    assert raw_snap(client, uno, "Ana")["game"]["turn"]["callout"] is None
+
+
+def test_one_disagreement_defeats_a_call_out(client, uno):
+    _post(client, uno, "host", "/turn/end")
+    _post(client, uno, "Ben", "/turn/callout")
+    assert _post(client, uno, "Cam", "/turn/callout/vote", agree=False).status_code == 200
+    assert "jail" not in _status_names(client, uno, "Hana")
+    assert raw_snap(client, uno, "Ana")["game"]["turn"]["callout"] is None
+    texts = [a["text"] for a in raw_snap(client, uno, "host")["activity"]]
+    assert any("failed: Cam disagreed" in t for t in texts)
+
+
+def test_a_call_out_lapses_when_the_next_turn_ends_and_the_host_can_cancel_one(client, uno):
+    _post(client, uno, "host", "/turn/end")
+    _post(client, uno, "Ben", "/turn/callout")
+    assert _post(client, uno, "Ben", "/turn/callout/cancel").status_code == 403  # host only
+    assert _post(client, uno, "host", "/turn/callout/cancel").status_code == 200
+    assert raw_snap(client, uno, "Ana")["game"]["turn"]["callout"] is None
+    _post(client, uno, "Ben", "/turn/callout")
+    _post(client, uno, "Ana", "/turn/end")  # Ana (holder) ends her turn: the old call-out lapses
+    turn = raw_snap(client, uno, "Ana")["game"]["turn"]
+    assert turn["callout"] is None and turn["last_ender"] == uno["Ana"]["player_id"]
+    assert _post(client, uno, "Ana", "/turn/callout").status_code == 403  # Ana cannot call out herself
+
+
+def test_switching_between_monopoly_and_unopoly_carries_the_turn_over(client, uno):
+    code, host = uno["code"], auth(uno["host"]["token"])
+    _post(client, uno, "host", "/turn/reverse")  # direction -1, card with Cam
+    assert client.post(f"/api/games/{code}/mode", headers=host, json={"mode": "monopoly"}).status_code == 200
+    turn = raw_snap(client, uno, "host")["game"]["turn"]
+    assert turn["effect"] == "dice" and turn["direction"] == 1  # direction resets
+    assert _holder_name(client, uno) == "Cam"  # same person is still up
+    assert _status_names(client, uno, "Cam") == ["dice"]
+    client.post(f"/api/games/{code}/mode", headers=host, json={"mode": "unopoly"})
+    assert _status_names(client, uno, "Cam") == ["card"]
+
+
+# ---------------------------------------------------------------- restart
+def test_restart_resets_the_game_but_keeps_the_players(client, uno):
+    code, host = uno["code"], auth(uno["host"]["token"])
+    ana, ben = auth(uno["Ana"]["token"]), auth(uno["Ben"]["token"])
+    colour = {p["name"]: p["colour"] for p in raw_snap(client, uno, "host")["players"]}
+    client.post(
+        f"/api/games/{code}/transactions", headers=ana, json={"to_id": uno["Ben"]["player_id"], "amount": 300}
+    )
+    client.post(f"/api/games/{code}/requests", headers=ben, json={"amount": 50})
+    client.post(
+        f"/api/games/{code}/players/{uno['Cam']['player_id']}/status", headers=host, json={"effect": "jail"}
+    )
+    _post(client, uno, "host", "/turn/reverse")
+    client.post(f"/api/games/{code}/end", headers=host)  # even a finished game can be restarted
+
+    assert client.post(f"/api/games/{code}/restart", headers=ana).status_code == 403  # host only
+    assert client.post(f"/api/games/{code}/restart", headers=host).status_code == 200
+
+    view = raw_snap(client, uno, "host")
+    assert view["game"]["status"] == "active"
+    assert {p["name"]: p["balance"] for p in view["players"]} == {
+        "Hana": 1500,
+        "Ana": 1500,
+        "Ben": 1500,
+        "Cam": 1500,
+    }
+    assert view["transactions"] == [] and view["requests"] == []
+    assert {p["name"]: p["colour"] for p in view["players"]} == colour  # names, colours, order kept
+    assert [p["name"] for p in view["players"]] == ["Hana", "Ana", "Ben", "Cam"]
+    assert [s["effect"] for p in view["players"] for s in p["statuses"]] == [
+        "card"
+    ]  # Jail gone; the card restarts
+    assert (
+        view["game"]["turn"]["holder_id"] == uno["host"]["player_id"]
+        and view["game"]["turn"]["direction"] == 1
+    )
+    assert [a["type"] for a in view["activity"]] == ["turn_passed", "game_restarted"]  # a clean activity feed
+    # and play carries on
+    assert _post(client, uno, "host", "/turn/end").status_code == 200
+
+
+def test_host_settings_reach_every_device_and_survive_a_restart(client, game):
+    code, host, ana = game["code"], auth(game["host"]["token"]), auth(game["Ana"]["token"])
+    url = f"/api/games/{code}/settings"
+    assert raw_snap(client, game, "Ana")["game"]["settings"] == {"siren_volume": 40}  # a quiet default
+    assert client.post(url, headers=ana, json={"siren_volume": 10}).status_code == 403  # host only
+    for bad in (-1, 101, 5.5, "loud", True):
+        assert client.post(url, headers=host, json={"siren_volume": bad}).status_code == 422, bad
+    ok = client.post(url, headers=host, json={"siren_volume": 15})
+    assert ok.status_code == 200 and ok.json()["result"] == {"siren_volume": 15}
+    for who in ("host", "Ana", "Ben"):  # players get the same setting, so their phones play it at that volume
+        assert raw_snap(client, game, who)["game"]["settings"]["siren_volume"] == 15
+    assert client.post(url, headers=host, json={}).status_code == 200  # nothing to change is fine
+    assert raw_snap(client, game, "Ana")["game"]["settings"]["siren_volume"] == 15
+    client.post(f"/api/games/{code}/restart", headers=host)
+    assert raw_snap(client, game, "Ana")["game"]["settings"]["siren_volume"] == 15
+    assert client.post(url, headers=host, json={"siren_volume": 0}).status_code == 200  # silent is allowed
+
+
+def test_host_can_test_the_siren_on_every_device(client, game):
+    url = f"/api/games/{game['code']}/settings/test-siren"
+    assert client.post(url, headers=auth(game["Ana"]["token"])).status_code == 403  # host only
+    with client.websocket_connect(f"/api/games/{game['code']}/ws?token={game['Ben']['token']}") as ws:
+        while ws.receive_json()["kind"] != "hello":
+            pass
+        assert client.post(url, headers=auth(game["host"]["token"])).status_code == 200
+        msg = ws.receive_json()
+        while msg["kind"] != "event":
+            msg = ws.receive_json()
+        assert msg["type"] == "siren_test"  # players' phones react to this by playing the siren

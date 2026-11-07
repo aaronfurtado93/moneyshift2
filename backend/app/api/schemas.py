@@ -24,6 +24,15 @@ class SetColour(BaseModel):
     colour: str = Field(max_length=7)
 
 
+class SettingsUpdate(BaseModel):
+    # Only the fields that are sent are changed.
+    siren_volume: StrictInt | None = Field(default=None, ge=0, le=100)
+
+
+class CalloutVote(BaseModel):
+    agree: StrictBool
+
+
 class DiceAssign(BaseModel):
     player_id: StrictInt
 

@@ -313,3 +313,34 @@ ms-dice.compact .dice-pair { gap: 10px; justify-content: flex-start; }
 .dice-total { font-size: 64px; font-weight: 800; line-height: 1; min-width: 1.1ch; text-align: left; }
 ms-dice.compact .dice-op { font-size: 20px; }
 ms-dice.compact .dice-total { font-size: 36px; }
+
+/* UnoPoly call-out */
+.card.callout { border: 2px solid #dc2626; background: color-mix(in srgb, #dc2626 8%, var(--card)); animation: callout-flash 0.9s ease-in-out 3; }
+@keyframes callout-flash { 0%, 100% { box-shadow: 0 0 0 0 #dc262600; } 50% { box-shadow: 0 0 22px 6px #dc2626aa; } }
+@media (prefers-reduced-motion: reduce) { .card.callout { animation: none; } }
+
+/* direction of play: a ring that turns round the bank, and a label under it */
+.flow-ring {
+  position: absolute; left: 50%; top: 50%; z-index: 1; pointer-events: none;
+  width: clamp(150px, 26vmin, 260px); aspect-ratio: 1; transform: translate(-50%, -50%);
+}
+.flow-ring.reverse { transform: translate(-50%, -50%) scaleX(-1); } /* mirrored: arrows and spin both flip */
+.flow-ring circle { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 9; opacity: 0.45; }
+.flow-ring polygon { fill: var(--accent); opacity: 0.8; }
+.flow-spin { transform-origin: 100px 100px; animation: flow-turn 22s linear infinite; }
+@keyframes flow-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .flow-spin { animation: none; } }
+.dir-pill {
+  position: absolute; left: 50%; top: calc(50% + clamp(75px, 13vmin, 130px) + 8px); transform: translateX(-50%); z-index: 2;
+  font-size: 13px; font-weight: 700; color: var(--accent); background: var(--card); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 12px; white-space: nowrap;
+}
+
+/* host settings (gear, top right of the bank dashboard) */
+.bank2 { position: relative; }
+.btn.gear { font-size: 18px; line-height: 1; padding: 4px 10px; }
+.settings-pop { position: absolute; right: 14px; top: 56px; z-index: 40; width: min(340px, calc(100% - 28px)); box-shadow: 0 12px 34px rgb(0 0 0 / 0.25); }
+.between { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.between h2 { margin: 0; }
+label.slider { flex-direction: column; gap: 6px; color: var(--fg); font-size: 15px; }
+label.slider input[type=range] { padding: 0; width: 100%; accent-color: var(--accent); }

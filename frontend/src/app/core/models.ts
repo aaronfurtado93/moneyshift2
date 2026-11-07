@@ -79,14 +79,32 @@ export interface DiceRoll {
   jailed: boolean;
 }
 
-export interface DiceState {
+export interface Callout {
+  id: number;
+  target_id: number;
+  caller_id: number;
+  /** Everyone who gets a vote: all players except the one called out. */
+  voters: number[];
+  agree: number[];
+  disagree: number[];
+}
+
+/** The turn that goes round the table: the Dice (Monopoly) or the Card (UnoPoly). */
+export interface TurnState {
+  effect: 'dice' | 'card';
+  label: string;
   holder_id: number | null;
-  /** True once the holder has rolled without doubles: they can now end the turn. */
+  /** 1 = join order (clockwise), -1 = reversed. */
+  direction: 1 | -1;
+  /** Dice: a non-double was rolled, so the turn must end. */
   rolled: boolean;
-  /** True once the holder has rolled at least once this turn, so they can end it. */
+  /** Dice: the holder has rolled at least once this turn, so they can end it. */
   acted: boolean;
   streak: number;
   last: DiceRoll | null;
+  /** Cards: who ended the previous turn (the person a call-out would target). */
+  last_ender: number | null;
+  callout: Callout | null;
 }
 
 export interface GameMode {
@@ -98,6 +116,14 @@ export interface GameMode {
   quick_amounts: number[];
   bank_actions: BankAction[];
   status_effects: StatusEffectDef[];
+  turn_effect: 'dice' | 'card' | null;
+  callouts: boolean;
+}
+
+/** Host settings that apply to every device in the game. */
+export interface GameSettings {
+  /** Call-out siren loudness, 0 (silent) to 100. */
+  siren_volume: number;
 }
 
 export interface Snapshot {
@@ -107,8 +133,9 @@ export interface Snapshot {
     starting_balance: number;
     currency: string;
     mode: GameMode;
-    /** null in modes without dice. */
-    dice: DiceState | null;
+    /** null in modes without turns. */
+    turn: TurnState | null;
+    settings: GameSettings;
   };
   me: { id: number; name: string; role: 'host' | 'player'; colour: string; plays: boolean };
   players: PlayerView[];

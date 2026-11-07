@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { playJailJingle, playSiren } from './synth';
 
 export type SoundName = 'cash' | 'dice' | 'doubles';
 
@@ -18,6 +19,7 @@ export class Sound {
   private readonly key = 'ms.sound';
   private readonly clips = new Map<SoundName, HTMLAudioElement>();
   private unlocked = false;
+  private audioContext?: AudioContext;
 
   readonly enabled = signal(this.load());
 
@@ -26,6 +28,7 @@ export class Sound {
     const unlock = () => {
       if (this.unlocked) return;
       this.unlocked = true;
+      void this.webAudio()?.resume(); // the synthesised sounds need the same first tap
       // A silent play/pause during a user gesture lets later programmatic plays through.
       const clip = this.clip('cash');
       if (!clip) return;
@@ -53,6 +56,34 @@ export class Sound {
     }
   }
 
+  /** Sad trombone then a cell-door clang, built in the browser (no audio files). */
+  playJail(delayMs = 0): void {
+    if (!this.enabled()) return;
+    setTimeout(() => {
+      const ctx = this.webAudio();
+      if (!ctx) return;
+      try {
+        if (ctx.state === 'suspended') void ctx.resume();
+        playJailJingle(ctx);
+      } catch {
+        /* audio not available */
+      }
+    }, delayMs);
+  }
+
+  /** Siren when someone is called out. `level` (0 to 1) is the host's siren volume setting. */
+  playSiren(level = 1, force = false): void {
+    if ((!this.enabled() && !force) || level <= 0) return;
+    const ctx = this.webAudio();
+    if (!ctx) return;
+    try {
+      if (ctx.state === 'suspended') void ctx.resume();
+      playSiren(ctx, level);
+    } catch {
+      /* audio not available */
+    }
+  }
+
   toggle(): void {
     const next = !this.enabled();
     this.enabled.set(next);
@@ -62,6 +93,12 @@ export class Sound {
       /* storage unavailable */
     }
     if (next) this.play('cash');
+  }
+
+  private webAudio(): AudioContext | null {
+    if (typeof AudioContext === 'undefined') return null;
+    this.audioContext ??= new AudioContext();
+    return this.audioContext;
   }
 
   private clip(name: SoundName): HTMLAudioElement | null {

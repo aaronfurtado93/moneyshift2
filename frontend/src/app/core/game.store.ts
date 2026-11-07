@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Api, ApiError } from './api';
-import { Flow, QueuedIntent, ServerInfo, Snapshot } from './models';
+import { Flow, GameSettings, QueuedIntent, ServerInfo, Snapshot } from './models';
 import { SessionStore } from './session';
 import { Sound } from './sound';
 import { buildPayUrl, newKey } from './util';
@@ -37,12 +37,14 @@ export class GameStore {
   readonly bankOnly = computed(() => this.isHost() && this.me()?.plays === false);
   readonly currency = computed(() => this.snapshot()?.game.currency ?? '$');
   readonly mode = computed(() => this.snapshot()?.game.mode ?? null);
-  readonly dice = computed(() => this.snapshot()?.game.dice ?? null);
-  readonly diceHolder = computed(() => {
-    const id = this.dice()?.holder_id;
+  readonly settings = computed(() => this.snapshot()?.game.settings ?? null);
+  /** The turn going round the table: the Dice in Monopoly, the Card in UnoPoly. */
+  readonly turn = computed(() => this.snapshot()?.game.turn ?? null);
+  readonly turnHolder = computed(() => {
+    const id = this.turn()?.holder_id;
     return this.players().find((p) => p.id === id) ?? null;
   });
-  readonly iHoldTheDice = computed(() => this.dice()?.holder_id === this.me()?.id);
+  readonly iHoldTheTurn = computed(() => this.turn()?.holder_id === this.me()?.id);
   /** Quick-add amounts for the current game mode. */
   readonly quickAmounts = computed(() => this.mode()?.quick_amounts?.length ? this.mode()!.quick_amounts : [10, 50, 100, 500]);
   readonly ended = computed(() => this.snapshot()?.game.status === 'ended');
@@ -71,6 +73,7 @@ export class GameStore {
   private toastTimer?: ReturnType<typeof setTimeout>;
   /** Set while this phone's own payment is in flight, so its balance drop does not chime twice. */
   private ownSpend = false;
+  private calloutSeen = 0;
   private refreshing = false;
   private refreshAgain = false;
   private closed = true;
@@ -88,6 +91,7 @@ export class GameStore {
     this.closed = false;
     this.snapshot.set(null);
     this.lastSeq = 0;
+    this.calloutSeen = 0;
     this.queue.set(this.sessions.loadQueue(this.code));
     this.connection.set('connecting');
     this.api.info().then((i) => this.info.set(i)).catch(() => undefined);
@@ -190,19 +194,58 @@ export class GameStore {
   }
 
   rollDice() {
-    return this.run(() => this.api.dice(this.code, this.token, 'roll'));
+    return this.run(() => this.api.turn(this.code, this.token, 'roll'));
   }
 
   endTurn() {
-    return this.run(() => this.api.dice(this.code, this.token, 'end'));
+    return this.run(() => this.api.turn(this.code, this.token, 'end'));
   }
 
-  passDice() {
-    return this.run(() => this.api.dice(this.code, this.token, 'pass'));
+  skipTurn() {
+    return this.run(() => this.api.turn(this.code, this.token, 'skip'));
   }
 
-  giveDice(playerId: number) {
-    return this.run(() => this.api.assignDice(this.code, this.token, playerId));
+  reverseTurn() {
+    return this.run(() => this.api.turn(this.code, this.token, 'reverse'));
+  }
+
+  passTurn() {
+    return this.run(() => this.api.turn(this.code, this.token, 'pass'));
+  }
+
+  giveTurn(playerId: number) {
+    return this.run(() => this.api.assignTurn(this.code, this.token, playerId));
+  }
+
+  // ---------- Uno call-outs ----------
+  startCallout() {
+    return this.run(() => this.api.callout(this.code, this.token, 'start'));
+  }
+
+  voteCallout(agree: boolean) {
+    return this.run(() => this.api.voteCallout(this.code, this.token, agree));
+  }
+
+  cancelCallout() {
+    return this.run(() => this.api.callout(this.code, this.token, 'cancel'));
+  }
+
+  updateSettings(settings: Partial<GameSettings>) {
+    return this.run(() => this.api.updateSettings(this.code, this.token, settings));
+  }
+
+  /** Ask every player's device to sound the siren once, at the saved volume. */
+  testSirenOnPlayers() {
+    return this.run(() => this.api.testSiren(this.code, this.token));
+  }
+
+  /** Play the siren on this device at the given loudness (0 to 1), even if this device is muted. */
+  previewSiren(level: number): void {
+    this.sound.playSiren(level, true);
+  }
+
+  restartGame() {
+    return this.run(() => this.api.restart(this.code, this.token));
   }
 
   applyStatus(playerId: number, effect: string) {
@@ -262,6 +305,8 @@ export class GameStore {
         const snap = await this.api.snapshot(this.code, this.token);
         this.playOnBalanceChange(snap);
         this.playOnRoll(snap);
+        this.playOnJail(snap);
+        this.playOnCallout(snap);
         this.snapshot.set(snap);
         if (snap.game.status === 'ended') this.sessions.markEnded(this.code);
         this.lastSeq = Math.max(this.lastSeq, snap.seq);
@@ -297,10 +342,34 @@ export class GameStore {
   /** Dice sound for everyone whenever a new roll shows up (doubles have their own sound). */
   private playOnRoll(next: Snapshot): void {
     const prev = this.snapshot();
-    const before = prev?.game.code === next.game.code ? (prev.game.dice?.last?.roll_id ?? 0) : null;
-    const last = next.game.dice?.last;
+    const before = prev?.game.code === next.game.code ? (prev.game.turn?.last?.roll_id ?? 0) : null;
+    const last = next.game.turn?.last;
     if (before === null || !last || last.roll_id <= before) return;
     this.sound.play(last.double ? 'doubles' : 'dice');
+  }
+
+  /** Sad trombone and a cell door, but only on the device of the player who has just been sent to Jail. */
+  private playOnJail(next: Snapshot): void {
+    const prev = this.snapshot();
+    if (!prev || prev.game.code !== next.game.code) return;
+    const jailed = (s: Snapshot) => new Set(s.players.filter((p) => p.statuses.some((x) => x.effect === 'jail')).map((p) => p.id));
+    const before = jailed(prev);
+    const me = next.me.id;
+    if (before.has(me) || !jailed(next).has(me)) return; // somebody else, or I was already in Jail
+    // After a third double the dice sound is playing: let it finish first.
+    const last = next.game.turn?.last;
+    const justRolled = !!last && last.roll_id > (prev.game.turn?.last?.roll_id ?? 0);
+    this.sound.playJail(justRolled ? 1600 : 0);
+  }
+
+  /** Siren on every device when a new call-out starts (not when you join a call-out already open). */
+  private playOnCallout(next: Snapshot): void {
+    const prev = this.snapshot();
+    const callout = next.game.turn?.callout;
+    if (!callout || callout.id <= this.calloutSeen) return;
+    this.calloutSeen = callout.id;
+    // The host's siren volume applies on every device.
+    if (prev && prev.game.code === next.game.code) this.sound.playSiren((next.game.settings?.siren_volume ?? 40) / 100);
   }
 
   private connect(): void {
@@ -333,6 +402,7 @@ export class GameStore {
         if (msg.data && ['transaction', 'reversal'].includes(msg.type ?? '')) {
           this.flow.set({ ...msg.data, key: msg.seq });
         }
+        if (msg.type === 'siren_test') this.sound.playSiren((this.snapshot()?.game.settings?.siren_volume ?? 40) / 100);
         this.maybeToast(msg.text ?? '', msg.type ?? '');
       }
       if (msg.kind === 'event' || msg.kind === 'presence') void this.refresh();
@@ -349,6 +419,8 @@ export class GameStore {
 
   private maybeToast(text: string, type: string): void {
     if (type === 'game_ended') return this.showToast('The host ended the game.');
+    if (type === 'game_restarted') return this.showToast('The host restarted the game.');
+    if (type === 'callout_started' || type === 'callout_result') return this.showToast(text);
     const me = this.me();
     if (!me || !['transaction', 'request_resolved', 'reversal'].includes(type)) return;
     if (text.includes(me.name) && !text.startsWith(me.name) || type === 'reversal') {

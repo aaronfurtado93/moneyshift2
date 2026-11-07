@@ -30,12 +30,33 @@ export class Api {
     return this.call(this.http.get<{ default: string; modes: GameMode[] }>('/api/modes'));
   }
 
-  dice(code: string, token: string, action: 'roll' | 'end' | 'pass') {
-    return this.call(this.http.post(`/api/games/${code}/dice/${action}`, {}, this.auth(token)));
+  turn(code: string, token: string, action: 'roll' | 'end' | 'skip' | 'reverse' | 'pass') {
+    return this.call(this.http.post(`/api/games/${code}/turn/${action}`, {}, this.auth(token)));
   }
 
-  assignDice(code: string, token: string, playerId: number) {
-    return this.call(this.http.post(`/api/games/${code}/dice/assign`, { player_id: playerId }, this.auth(token)));
+  assignTurn(code: string, token: string, playerId: number) {
+    return this.call(this.http.post(`/api/games/${code}/turn/assign`, { player_id: playerId }, this.auth(token)));
+  }
+
+  callout(code: string, token: string, action: 'start' | 'cancel') {
+    const path = action === 'start' ? 'callout' : 'callout/cancel';
+    return this.call(this.http.post(`/api/games/${code}/turn/${path}`, {}, this.auth(token)));
+  }
+
+  voteCallout(code: string, token: string, agree: boolean) {
+    return this.call(this.http.post(`/api/games/${code}/turn/callout/vote`, { agree }, this.auth(token)));
+  }
+
+  testSiren(code: string, token: string) {
+    return this.call(this.http.post(`/api/games/${code}/settings/test-siren`, {}, this.auth(token)));
+  }
+
+  updateSettings(code: string, token: string, settings: { siren_volume?: number }) {
+    return this.call(this.http.post(`/api/games/${code}/settings`, settings, this.auth(token)));
+  }
+
+  restart(code: string, token: string) {
+    return this.call(this.http.post(`/api/games/${code}/restart`, {}, this.auth(token)));
   }
 
   applyStatus(code: string, token: string, playerId: number, effect: string) {

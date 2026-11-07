@@ -4,7 +4,7 @@ import { Dice } from '../core/dice';
 import { Digits } from '../core/digits';
 import { ActivatedRoute, Router } from '@angular/router';
 import { GameStore } from '../core/game.store';
-import { BankAction, TxView } from '../core/models';
+import { BankAction, Callout, TxView } from '../core/models';
 import { Qr } from '../core/qr';
 import { Scanner } from '../core/scanner';
 import { formatMoney, parseAmount, parsePayLink } from '../core/util';
@@ -78,55 +78,93 @@ import { formatMoney, parseAmount, parsePayLink } from '../core/util';
           }
         }
 
-        @if (store.dice(); as d) {
-          <!-- Open on your own turn, collapsed while someone else is rolling. -->
-          <section class="card dice-card acc" [class.holder-ring]="store.iHoldTheDice()">
-            <button class="acc-head" (click)="diceOpen.set(!diceOpen())" [attr.aria-expanded]="diceOpen()">
+        @if (store.turn(); as t) {
+          <!-- Open on your own turn, collapsed while someone else is up. -->
+          <section class="card dice-card acc" [class.holder-ring]="store.iHoldTheTurn()">
+            <button class="acc-head" (click)="turnOpen.set(!turnOpen())" [attr.aria-expanded]="turnOpen()">
               <span>
-                🎲 Dice
+                {{ t.effect === 'dice' ? '🎲 Dice' : '🃏 Cards' }}
                 <span class="small muted">
-                  · {{ store.iHoldTheDice() ? "your turn" : (store.diceHolder()?.name ?? 'someone') + "'s turn" }}
+                  · {{ store.iHoldTheTurn() ? "your turn" : (store.turnHolder()?.name ?? 'someone') + "'s turn" }}
                 </span>
               </span>
-              <i class="chev" [class.up]="diceOpen()" aria-hidden="true"></i>
+              <i class="chev" [class.up]="turnOpen()" aria-hidden="true"></i>
             </button>
-            @if (diceOpen()) {
+            @if (turnOpen()) {
               <p class="small muted">
-                @if (store.iHoldTheDice()) {
-                  <b>It's your turn</b>. Roll doubles three times in a row and you go to Jail.
+                @if (store.iHoldTheTurn()) {
+                  <b>It's your turn</b>.
+                  @if (t.effect === 'dice') {Roll doubles three times in a row and you go to Jail.} @else {Play your card, then tell us what you played.}
                 } @else {
-                  It's <b>{{ store.diceHolder()?.name ?? 'someone' }}</b>'s turn
+                  It's <b>{{ store.turnHolder()?.name ?? 'someone' }}</b>'s turn
+                }
+                @if (t.effect === 'card') {
+                  <br />Direction of play: <b>{{ t.direction === 1 ? '↻ clockwise' : '↺ counter-clockwise' }}</b>
                 }
               </p>
-              <ms-dice [d1]="d.last?.d1 ?? null" [d2]="d.last?.d2 ?? null" [rollId]="d.last?.roll_id ?? 0" [showTotal]="true" />
-              @if (d.last; as l) {
-                <p class="small">
-                  {{ nameOf(l.roller_id) }} rolled
-                  @if (l.double && !l.jailed) {<span> · doubles!</span>}
-                  @if (l.jailed) {<span> · third double in a row: Jail!</span>}
-                </p>
+              @if (t.effect === 'dice') {
+                <ms-dice [d1]="t.last?.d1 ?? null" [d2]="t.last?.d2 ?? null" [rollId]="t.last?.roll_id ?? 0" [showTotal]="true" />
+                @if (t.last; as l) {
+                  <p class="small">
+                    {{ nameOf(l.roller_id) }} rolled
+                    @if (l.double && !l.jailed) {<span> · doubles!</span>}
+                    @if (l.jailed) {<span> · third double in a row: Jail!</span>}
+                  </p>
+                }
               }
-              @if (store.iHoldTheDice() && !store.ended()) {
+              @if (store.iHoldTheTurn() && !store.ended()) {
                 @if (myJail() && !myJail()!.decided) {
                   <p class="small muted">You are in Jail: pay the fine or miss your turn first.</p>
-                } @else {
-                  @if (d.streak > 0 && !d.rolled) {
+                } @else if (t.effect === 'dice') {
+                  @if (t.streak > 0 && !t.rolled) {
                     <p class="small warn">
-                      Doubles {{ d.streak }} in a row. {{ d.streak >= 2 ? 'One more and you go to Jail!' : 'Roll again, or end your turn.' }}
+                      Doubles {{ t.streak }} in a row. {{ t.streak >= 2 ? 'One more and you go to Jail!' : 'Roll again, or end your turn.' }}
                     </p>
                   }
-                  @if (!d.rolled) {
+                  @if (!t.rolled) {
                     <button class="btn primary block" [disabled]="busy()" (click)="rollDice()">
-                      {{ d.streak ? 'Roll again (doubles)' : 'Roll the dice' }}
+                      {{ t.streak ? 'Roll again (doubles)' : 'Roll the dice' }}
                     </button>
                   }
-                  @if (d.acted) {
-                    <button class="btn block" [class.primary]="d.rolled" [disabled]="busy()" (click)="endTurn()">End turn</button>
+                  @if (t.acted) {
+                    <button class="btn block" [class.primary]="t.rolled" [disabled]="busy()" (click)="endTurn()">End turn</button>
                   }
+                } @else {
+                  <!-- Cards are in hand, so there is no roll: three ways to finish the turn. -->
+                  <button class="btn primary block" [disabled]="busy()" (click)="endTurn()">End turn</button>
+                  <button class="btn block" [disabled]="busy()" (click)="skipTurn()">⏭ Skip next player</button>
+                  <button class="btn block" [disabled]="busy()" (click)="reverseTurn()">🔄 Reverse</button>
                 }
               }
             }
           </section>
+
+          @if (store.mode()?.callouts && !store.ended()) {
+            @if (t.callout; as c) {
+              <section class="card callout" aria-live="assertive">
+                <h2>📣 Call out!</h2>
+                <p>
+                  <b>{{ nameOf(c.caller_id) }}</b> says <b>{{ nameOf(c.target_id) }}</b> ended their turn without
+                  saying UNO.
+                </p>
+                <p class="small muted">Agreed: {{ c.agree.length }} of {{ c.voters.length }}. If everyone agrees they go to Jail.</p>
+                @if (canVote(c)) {
+                  <div class="row">
+                    <button class="btn primary grow" [disabled]="busy()" (click)="vote(true)">Agree</button>
+                    <button class="btn grow" [disabled]="busy()" (click)="vote(false)">Disagree</button>
+                  </div>
+                } @else if (c.target_id === store.me()?.id) {
+                  <p class="small">The others are deciding…</p>
+                } @else {
+                  <p class="small muted">Waiting for the others to vote…</p>
+                }
+              </section>
+            } @else if (t.last_ender !== null && t.last_ender !== store.me()?.id && store.me()?.plays) {
+              <button class="btn danger block" [disabled]="busy()" (click)="callOut()">
+                📣 Call Out! {{ nameOf(t.last_ender) }} didn't say UNO
+              </button>
+            }
+          }
         }
 
         @if (!store.ended()) {
@@ -256,16 +294,25 @@ import { formatMoney, parseAmount, parsePayLink } from '../core/util';
               </div>
             }
 
-            @if (!store.ended()) {
-              <h3>End game</h3>
-              @if (confirmEnd()) {
-                <div class="row">
-                  <button class="btn danger grow" (click)="end()">Yes, end the game</button>
-                  <button class="btn" (click)="confirmEnd.set(false)">Cancel</button>
-                </div>
-              } @else {
-                <button class="btn block" (click)="confirmEnd.set(true)">End game…</button>
-              }
+            <h3>Restart / end game</h3>
+            @if (confirmRestart()) {
+              <p class="small muted">Everyone goes back to {{ fmt(s.game.starting_balance) }} and the ledger is cleared.</p>
+              <div class="row">
+                <button class="btn danger grow" (click)="restart()">Yes, restart the game</button>
+                <button class="btn" (click)="confirmRestart.set(false)">Cancel</button>
+              </div>
+            } @else if (confirmEnd()) {
+              <div class="row">
+                <button class="btn danger grow" (click)="end()">Yes, end the game</button>
+                <button class="btn" (click)="confirmEnd.set(false)">Cancel</button>
+              </div>
+            } @else {
+              <div class="row">
+                <button class="btn grow" (click)="confirmEnd.set(false); confirmRestart.set(true)">Restart game…</button>
+                @if (!store.ended()) {
+                  <button class="btn grow" (click)="confirmRestart.set(false); confirmEnd.set(true)">End game…</button>
+                }
+              </div>
             }
           </section>
         }
@@ -379,6 +426,7 @@ export class Game implements OnInit, OnDestroy {
   protected readonly askMsg = signal('');
   protected readonly hostMsg = signal('');
   protected readonly confirmEnd = signal(false);
+  protected readonly confirmRestart = signal(false);
   protected readonly scanning = signal(false);
   protected readonly confirmLeave = signal(false);
   /** Accordion for the QR cards: one open at a time, both collapsed by default. */
@@ -406,7 +454,7 @@ export class Game implements OnInit, OnDestroy {
       const t = this.target();
       if (t !== this.bankId && others.length && !others.some((p) => p.id === t)) this.target.set(others[0].id);
     });
-    effect(() => this.diceOpen.set(this.store.iHoldTheDice()));
+    effect(() => this.turnOpen.set(this.store.iHoldTheTurn() || this.needsMyVote()));
     // A banker-only host has no player view: send them to the dashboard.
     effect(() => {
       if (this.store.bankOnly()) void this.router.navigate(['/bank', this.code], { replaceUrl: true });
@@ -482,15 +530,52 @@ export class Game implements OnInit, OnDestroy {
     else this.bankAmount = '';
   }
 
-  /** Dice card is open on your turn and collapsed while someone else rolls (you can still open it). */
-  protected readonly diceOpen = signal(false);
+  /** The turn card is open on your turn (or when you must vote) and collapsed otherwise; you can still open it. */
+  protected readonly turnOpen = signal(false);
+  protected readonly needsMyVote = computed(() => {
+    const c = this.store.turn()?.callout;
+    return !!c && this.canVote(c);
+  });
   protected readonly myJail = computed(() => this.store.myPlayer()?.statuses.find((s) => s.effect === 'jail') ?? null);
   /** True on this player's turn, or in modes without dice (where there are no turns to wait for). */
-  protected readonly onMyTurn = computed(() => !this.store.dice() || this.store.iHoldTheDice());
+  protected readonly onMyTurn = computed(() => !this.store.turn() || this.store.iHoldTheTurn());
 
   protected async rollDice(): Promise<void> {
     this.busy.set(true);
     const err = await this.store.rollDice();
+    this.busy.set(false);
+    if (err) this.store.showToast(err);
+  }
+
+  protected canVote(c: Callout): boolean {
+    const me = this.store.me()?.id;
+    return me !== undefined && c.voters.includes(me) && !c.agree.includes(me) && !c.disagree.includes(me);
+  }
+
+  protected async skipTurn(): Promise<void> {
+    this.busy.set(true);
+    const err = await this.store.skipTurn();
+    this.busy.set(false);
+    if (err) this.store.showToast(err);
+  }
+
+  protected async reverseTurn(): Promise<void> {
+    this.busy.set(true);
+    const err = await this.store.reverseTurn();
+    this.busy.set(false);
+    if (err) this.store.showToast(err);
+  }
+
+  protected async callOut(): Promise<void> {
+    this.busy.set(true);
+    const err = await this.store.startCallout();
+    this.busy.set(false);
+    if (err) this.store.showToast(err);
+  }
+
+  protected async vote(agree: boolean): Promise<void> {
+    this.busy.set(true);
+    const err = await this.store.voteCallout(agree);
     this.busy.set(false);
     if (err) this.store.showToast(err);
   }
@@ -542,6 +627,12 @@ export class Game implements OnInit, OnDestroy {
 
   protected async undo(id: number): Promise<void> {
     const err = await this.store.undo(id);
+    if (err) this.store.showToast(err);
+  }
+
+  protected async restart(): Promise<void> {
+    this.confirmRestart.set(false);
+    const err = await this.store.restartGame();
     if (err) this.store.showToast(err);
   }
 

@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Component, ElementRef, HostListener, OnDestroy, OnInit, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Dice } from '../core/dice';
 import { Digits } from '../core/digits';
@@ -45,16 +45,39 @@ interface Seat {
             @if (s.me.plays) {
               <button class="btn small" (click)="toPlayer()">My player view</button>
             }
-            @if (!store.ended()) {
-              @if (confirmEnd()) {
-                <button class="btn small danger" (click)="end()">Confirm end game</button>
-                <button class="btn small" (click)="confirmEnd.set(false)">Cancel</button>
-              } @else {
-                <button class="btn small" (click)="confirmEnd.set(true)">End game…</button>
+            <button class="btn small gear" (click)="settingsOpen.set(!settingsOpen())" [attr.aria-expanded]="settingsOpen()" aria-label="Settings" title="Settings">⚙</button>
+            @if (confirmRestart()) {
+              <span class="small muted">Everyone back to {{ fmt(s.game.starting_balance) }}, ledger cleared?</span>
+              <button class="btn small danger" (click)="restart()">Confirm restart</button>
+              <button class="btn small" (click)="confirmRestart.set(false)">Cancel</button>
+            } @else if (confirmEnd()) {
+              <button class="btn small danger" (click)="end()">Confirm end game</button>
+              <button class="btn small" (click)="confirmEnd.set(false)">Cancel</button>
+            } @else {
+              <button class="btn small" (click)="confirmEnd.set(false); confirmRestart.set(true)">Restart game…</button>
+              @if (!store.ended()) {
+                <button class="btn small" (click)="confirmRestart.set(false); confirmEnd.set(true)">End game…</button>
               }
             }
           </div>
         </header>
+
+        @if (settingsOpen()) {
+          <section class="settings-pop card" role="dialog" aria-label="Settings">
+            <div class="between">
+              <h2>⚙ Settings</h2>
+              <button class="btn small" (click)="settingsOpen.set(false)">Close</button>
+            </div>
+            <label class="slider">
+              <span>Call-out siren volume <b>{{ sirenDraft() }}%</b></span>
+              <input type="range" min="0" max="100" step="5" [value]="sirenDraft()"
+                     (input)="sirenDraft.set(+$any($event.target).value)" (change)="saveSiren()" />
+              <span class="small muted">Applies to every player's device. 0 turns the siren off.</span>
+            </label>
+            <button class="btn small" (click)="testSiren()">▶ Test on this device</button>
+            <button class="btn small" (click)="testSirenOnPlayers()">📣 Test on players' devices</button>
+          </section>
+        }
 
         @if (store.toast()) {
           <p class="toast" role="status">{{ store.toast() }}</p>
@@ -75,6 +98,23 @@ interface Seat {
                 }
               </svg>
 
+              @if (s.game.turn; as d) {
+                <!-- Which way play is going round the table: the ring turns that way, and the pill says it. -->
+                <svg class="flow-ring" [class.reverse]="d.direction === -1" viewBox="0 0 200 200" aria-hidden="true">
+                  <g class="flow-spin">
+                    <circle cx="100" cy="100" r="92" />
+                    <polygon points="112,8 98,0 98,16" />
+                    <polygon points="112,8 98,0 98,16" transform="rotate(120 100 100)" />
+                    <polygon points="112,8 98,0 98,16" transform="rotate(240 100 100)" />
+                  </g>
+                </svg>
+                @if (seats().length > 1) {
+                  <div class="dir-pill" [attr.aria-label]="'Direction of play: ' + (d.direction === 1 ? 'clockwise' : 'counter-clockwise')">
+                    {{ d.direction === 1 ? '↻ Clockwise' : '↺ Counter-clockwise' }}
+                  </div>
+                }
+              }
+
               <div class="hub" #hub>
                 <span class="big">🏦</span>
                 <b>Bank</b>
@@ -84,7 +124,7 @@ interface Seat {
               @for (seat of seats(); track seat.p.id) {
                 <button
                   class="seat"
-                  [class.holder-ring]="s.game.dice?.holder_id === seat.p.id"
+                  [class.holder-ring]="s.game.turn?.holder_id === seat.p.id"
                   [attr.data-seat]="seat.p.id"
                   [class.sel]="selected() === seat.p.id"
                   [style.left.%]="seat.x"
@@ -98,6 +138,8 @@ interface Seat {
                   @for (st of seat.p.statuses; track st.effect) {
                     @if (st.effect === 'dice') {
                       <span class="status-badge dice">🎲 Dice</span>
+                    } @else if (st.effect === 'card') {
+                      <span class="status-badge dice">🃏 Card</span>
                     } @else {
                       <span class="status-badge">🔒 {{ st.label }} · {{ st.turns_left }}{{ st.decided ? ' (locked)' : '' }}</span>
                     }
@@ -158,23 +200,39 @@ interface Seat {
                   }
                 }
               }
-              @if (s.game.dice; as d) {
-                <h3 class="sub">Dice</h3>
+              @if (s.game.turn; as d) {
+                <h3 class="sub">{{ d.effect === 'dice' ? 'Dice' : 'Cards' }}</h3>
                 <p class="small muted">
                   Goes round in player order and skips players in Jail. Override it here.
                 </p>
-                <p class="small"><b>{{ holderName() }}</b> has the dice
-                  @if (d.last; as l) {· last roll {{ l.d1 }} + {{ l.d2 }} = {{ l.total }}{{ l.double ? ' (doubles)' : '' }}}
+                <p class="small"><b>{{ holderName() }}</b> {{ d.effect === 'dice' ? 'has the dice' : 'is up' }}
+                  @if (d.effect === 'dice' && d.last; as l) {· last roll {{ l.d1 }} + {{ l.d2 }} = {{ l.total }}{{ l.double ? ' (doubles)' : '' }}}
+                  @if (d.effect === 'card') {· {{ d.direction === 1 ? '↻ clockwise' : '↺ counter-clockwise' }}}
                 </p>
-                <ms-dice class="compact" [d1]="d.last?.d1 ?? null" [d2]="d.last?.d2 ?? null" [rollId]="d.last?.roll_id ?? 0" [showTotal]="true" />
+                @if (d.effect === 'dice') {
+                  <ms-dice class="compact" [d1]="d.last?.d1 ?? null" [d2]="d.last?.d2 ?? null" [rollId]="d.last?.roll_id ?? 0" [showTotal]="true" />
+                }
                 @if (!store.ended()) {
                   <div class="qa">
-                    <button class="btn small primary" [disabled]="busy() || d.rolled || !d.holder_id" (click)="hostRoll()">Roll for {{ holderName() }}</button>
-                    <button class="btn small" [disabled]="busy() || !d.holder_id" (click)="hostPass()">Pass to next</button>
+                    @if (d.effect === 'dice') {
+                      <button class="btn small primary" [disabled]="busy() || d.rolled || !d.holder_id" (click)="hostRoll()">Roll for {{ holderName() }}</button>
+                      <button class="btn small" [disabled]="busy() || !d.holder_id" (click)="hostPass()">Pass to next</button>
+                    } @else {
+                      <button class="btn small primary" [disabled]="busy() || !d.holder_id" (click)="hostEnd()">End turn</button>
+                      <button class="btn small" [disabled]="busy() || !d.holder_id" (click)="hostSkip()">⏭ Skip next</button>
+                      <button class="btn small" [disabled]="busy() || !d.holder_id" (click)="hostReverse()">🔄 Reverse</button>
+                    }
                     <button class="btn small" [disabled]="busy() || !selected()" (click)="hostGive()">
-                      Give {{ selected() ? nameOf(selected()) : 'player' }} dice
+                      Give {{ selected() ? nameOf(selected()) : 'player' }} {{ d.effect === 'dice' ? 'dice' : 'the card' }}
                     </button>
                   </div>
+                  @if (d.callout; as c) {
+                    <div class="line">
+                      <span>📣 {{ nameOf(c.caller_id) }} called out <b>{{ nameOf(c.target_id) }}</b> · agreed {{ c.agree.length }}/{{ c.voters.length }}
+                        @if (c.disagree.length) {· {{ c.disagree.length }} disagreed}</span>
+                      <button class="btn small" (click)="cancelCallout()">Cancel call-out</button>
+                    </div>
+                  }
                 }
               }
             </section>
@@ -360,6 +418,10 @@ export class Bank implements OnInit, OnDestroy {
   protected readonly busy = signal(false);
   protected readonly msg = signal('');
   protected readonly confirmEnd = signal(false);
+  protected readonly confirmRestart = signal(false);
+  protected readonly settingsOpen = signal(false);
+  /** The slider position while it is being dragged; saved to the game when released. */
+  protected readonly sirenDraft = signal(40);
 
   /** Players around the table in join order (stable, so nobody jumps around when balances change). */
   protected readonly seats = computed<Seat[]>(() => {
@@ -391,6 +453,8 @@ export class Bank implements OnInit, OnDestroy {
       const ids = this.store.playing().map((p) => p.id);
       if (this.dragging() === null) untracked(() => this.order.set(ids));
     });
+    // Show the saved siren volume (and any change made elsewhere).
+    effect(() => this.sirenDraft.set(this.store.settings()?.siren_volume ?? 40));
     // Animate every money movement as it happens.
     effect(() => {
       const flow = this.store.flow();
@@ -539,34 +603,47 @@ export class Bank implements OnInit, OnDestroy {
   );
 
   protected holderName(): string {
-    return this.store.diceHolder()?.name ?? 'nobody';
+    return this.store.turnHolder()?.name ?? 'nobody';
   }
 
   protected isDecided(p: PlayerView, effect: string): boolean {
     return p.statuses.find((s) => s.effect === effect)?.decided ?? false;
   }
 
-  // ---------- dice overrides ----------
-  protected async hostRoll(): Promise<void> {
+  // ---------- turn overrides (host) ----------
+  private async hostRun(action: () => Promise<string | null>): Promise<void> {
     this.busy.set(true);
-    const err = await this.store.rollDice();
+    const err = await action();
     this.busy.set(false);
     if (err) this.store.showToast(err);
   }
 
-  protected async hostPass(): Promise<void> {
-    this.busy.set(true);
-    const err = await this.store.passDice();
-    this.busy.set(false);
-    if (err) this.store.showToast(err);
+  protected hostRoll(): Promise<void> {
+    return this.hostRun(() => this.store.rollDice());
   }
 
-  protected async hostGive(): Promise<void> {
-    if (!this.selected()) return;
-    this.busy.set(true);
-    const err = await this.store.giveDice(this.selected());
-    this.busy.set(false);
-    if (err) this.store.showToast(err);
+  protected hostPass(): Promise<void> {
+    return this.hostRun(() => this.store.passTurn());
+  }
+
+  protected hostEnd(): Promise<void> {
+    return this.hostRun(() => this.store.endTurn());
+  }
+
+  protected hostSkip(): Promise<void> {
+    return this.hostRun(() => this.store.skipTurn());
+  }
+
+  protected hostReverse(): Promise<void> {
+    return this.hostRun(() => this.store.reverseTurn());
+  }
+
+  protected hostGive(): Promise<void> {
+    return this.selected() ? this.hostRun(() => this.store.giveTurn(this.selected())) : Promise.resolve();
+  }
+
+  protected cancelCallout(): Promise<void> {
+    return this.hostRun(() => this.store.cancelCallout());
   }
 
   protected withStatus(effect: string): PlayerView[] {
@@ -629,6 +706,32 @@ export class Bank implements OnInit, OnDestroy {
 
   protected async undo(id: number): Promise<void> {
     const err = await this.store.undo(id);
+    if (err) this.store.showToast(err);
+  }
+
+  @HostListener('document:keydown.escape')
+  protected closeSettings(): void {
+    this.settingsOpen.set(false);
+  }
+
+  protected async saveSiren(): Promise<void> {
+    const err = await this.store.updateSettings({ siren_volume: this.sirenDraft() });
+    if (err) this.store.showToast(err);
+  }
+
+  protected async testSirenOnPlayers(): Promise<void> {
+    await this.saveSiren(); // test the volume as it is now on the slider
+    const err = await this.store.testSirenOnPlayers();
+    if (err) this.store.showToast(err);
+  }
+
+  protected testSiren(): void {
+    this.store.previewSiren(this.sirenDraft() / 100);
+  }
+
+  protected async restart(): Promise<void> {
+    this.confirmRestart.set(false);
+    const err = await this.store.restartGame();
     if (err) this.store.showToast(err);
   }
 

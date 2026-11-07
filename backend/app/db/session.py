@@ -39,6 +39,9 @@ def _ensure_columns(engine: Engine) -> None:
     }:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE player_statuses ADD COLUMN decided BOOLEAN NOT NULL DEFAULT 0"))
+    if "settings" not in {c["name"] for c in insp.get_columns("games")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE games ADD COLUMN settings TEXT"))
     if "dice" not in {c["name"] for c in insp.get_columns("games")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE games ADD COLUMN dice TEXT"))
